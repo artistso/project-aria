@@ -157,6 +157,7 @@ aria/
 
 Detailed design: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) ·
 Formal specification: [`docs/DESIGN_SPEC.md`](docs/DESIGN_SPEC.md) ·
+Prior art and positioning: [`docs/PRIOR_ART.md`](docs/PRIOR_ART.md) ·
 Reading it with an offline LLM: [`docs/OFFLINE_LLM_GUIDE.md`](docs/OFFLINE_LLM_GUIDE.md).
 
 ---
@@ -197,6 +198,33 @@ The neural component, measured separately:
 preference pairs mined from verified derivations : 111
 held-out ranking accuracy                        : 73.9%
 ```
+
+---
+
+## Positioning against prior art
+
+**This is not a new idea, and the README should not imply that it is.** ARIA
+continues four well-established lines of work: computer algebra and automated
+theorem proving (1960s–), neuro-symbolic AI, neural theorem proving in the
+AlphaGeometry / AlphaProof / DeepSeek-Prover tradition, and neural-guided
+symbolic search in the DreamCoder tradition. In all of those systems a neural
+component proposes and a symbolic engine verifies — the same split ARIA uses.
+
+What is modestly distinctive here is not capability but discipline:
+
+- **step-level invariants** — each step declares *which* algebraic property makes
+  it admissible, and that property is checked (this is what rejects squaring both
+  sides);
+- **three-valued verdicts as a headline metric** — `unknown` is reported, and the
+  benchmark's headline number is the *invalid derivation rate*;
+- **a hard boundary the neural component cannot cross** — it ranks rule outputs,
+  it cannot emit expressions;
+- **dependency-free reproducibility** — ~6,300 lines, stdlib only, deterministic.
+
+ARIA is far weaker than the state of the art in capability: no Lean/Coq backend,
+no proof search, no pretrained model, no IMO-scale results, and a 46-task
+self-authored benchmark. Full lineage and the blunt comparison:
+[`docs/PRIOR_ART.md`](docs/PRIOR_ART.md).
 
 ---
 
