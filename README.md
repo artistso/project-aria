@@ -156,7 +156,8 @@ aria/
 ```
 
 Detailed design: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) ·
-Formal specification: [`docs/DESIGN_SPEC.md`](docs/DESIGN_SPEC.md).
+Formal specification: [`docs/DESIGN_SPEC.md`](docs/DESIGN_SPEC.md) ·
+Reading it with an offline LLM: [`docs/OFFLINE_LLM_GUIDE.md`](docs/OFFLINE_LLM_GUIDE.md).
 
 ---
 
