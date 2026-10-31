@@ -161,6 +161,8 @@ Prior art and positioning: [`docs/PRIOR_ART.md`](docs/PRIOR_ART.md) ·
 Local-model integration: [`docs/LLM_INTEGRATION.md`](docs/LLM_INTEGRATION.md) ·
 Weights and training: [`docs/WEIGHT_REWRITING.md`](docs/WEIGHT_REWRITING.md) ·
 The ledger: [`docs/LEDGER.md`](docs/LEDGER.md) ·
+Memory and geometry: [`docs/MEMORY.md`](docs/MEMORY.md) · [`docs/GEOMETRY.md`](docs/GEOMETRY.md) ·
+Model downloads: [`docs/HF_MANIFEST.md`](docs/HF_MANIFEST.md) ·
 What the account already has: [`docs/SCAN_FINDINGS.md`](docs/SCAN_FINDINGS.md) ·
 Reading it with an offline LLM: [`docs/OFFLINE_LLM_GUIDE.md`](docs/OFFLINE_LLM_GUIDE.md).
 
@@ -301,6 +303,64 @@ Full reasoning and falsifiers: [`docs/LEDGER.md`](docs/LEDGER.md).
 
 ---
 
+## Memory: a file the model can look into
+
+Weights are knowledge you cannot read, cite, or correct one item at a time. ARIA keeps a
+second kind: an append-only file of short text entries, searchable on purpose.
+
+```bash
+aria memory add "the Schwarzschild singularity at r = 0 is spacelike" \
+    --tags penrose,singularity --source aria/geometry/causal.py --confidence verified
+aria memory find "where is the horizon"          # ranked, explainable
+aria memory context "penrose singularity"        # a block to put in front of a model
+aria memory audit                                # entries with nothing holding them up
+aria memory import --from ledger                 # proven work becomes a procedure
+```
+
+Every entry carries a **source** and a **confidence** (`unverified → stated → tested →
+verified`). A guess is allowed to exist; it is not allowed to look like knowledge — that
+is the whole defence against a text memory becoming confabulation. Retrieval is lexical
+and explainable, so it runs on a tablet with no GPU.
+
+Text becomes a *rewrite* through the ledger, never directly: memory goes into the prompt,
+the model emits a contract, the verifier proves it, the ledger records it, and only then
+does `aria ledger sft` export it as a training target. The text proposes; the verifier
+disposes. [`docs/MEMORY.md`](docs/MEMORY.md)
+
+## Geometry: shapes and Penrose diagrams, checked
+
+```bash
+aria geometry list
+aria geometry shape icosahedron --size 2
+aria geometry penrose schwarzschild
+aria geometry check --remember        # 18 identities, then file the verified facts in memory
+```
+
+Shapes are records of counts and measurements plus the identities that must hold —
+`V − E + F = 2` for all five Platonic solids, duality is an involution, `q(p−2) < 2p`
+admits exactly five pairs, area = ½·perimeter·inradius. Penrose diagrams are implemented
+as **coordinate maps**, because the picture is a consequence of the map: Minkowski's
+compactification, Schwarzschild's Kruskal coordinates with `UV = (1 − r/2M)e^{r/2M}`, and
+FRW conformal time. The invariants are checked numerically — null rays at 45°, the horizon
+at `U = 0`, the singularity on `UV = 1`, a square-root approach to the horizon.
+[`docs/GEOMETRY.md`](docs/GEOMETRY.md)
+
+## Before you download a model
+
+```bash
+aria model inspect Qwen3-1.7B-Q4_K_M.gguf
+# Qwen3-1.7B  (qwen3)
+#   parameters     1.72B
+#   tensors        290
+#   quantisation   q4_k
+```
+
+Reads the GGUF header with no GPU and no runtime, and refuses an LFS pointer by name —
+the failure that a `git clone` of a model repo produces.
+Which repos and files to fetch, and where to put them: [`docs/HF_MANIFEST.md`](docs/HF_MANIFEST.md).
+
+---
+
 ## Positioning against prior art
 
 **This is not a new idea, and the README should not imply that it is.** ARIA
@@ -341,7 +401,7 @@ self-authored benchmark. Full lineage and the blunt comparison:
 - Dimensional analysis, nine physical laws, dimensional inversion
 - Structural embeddings and a trained step-ranking policy with policy-guided search
 - Benchmark harness with five reported metrics
-- CLI, 208 tests, CI workflow
+- CLI, 254 tests, CI workflow
 
 **Partial / deliberately bounded**
 
@@ -362,7 +422,7 @@ self-authored benchmark. Full lineage and the blunt comparison:
 ## Development
 
 ```bash
-pytest                                  # 208 tests
+pytest                                  # 254 tests
 aria bench                              # full suite + markdown report
 aria bench --suite solve --markdown benchmarks/report.md
 aria train --epochs 80 --eval           # retrain the step policy

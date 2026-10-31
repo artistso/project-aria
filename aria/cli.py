@@ -172,6 +172,77 @@ def build_parser() -> argparse.ArgumentParser:
     led_sft.add_argument("--out", required=True)
     led_sft.add_argument("--ledger", default=None)
 
+    memory_cmd = subparsers.add_parser("memory", help="the text memory ARIA keeps for itself")
+    memory_sub = memory_cmd.add_subparsers(dest="memory_action", required=True)
+
+    mem_add = memory_sub.add_parser("add", help="remember something")
+    mem_add.add_argument("text", help="what to remember")
+    mem_add.add_argument(
+        "--kind", choices=("fact", "procedure", "correction", "source"), default="fact"
+    )
+    mem_add.add_argument("--tags", default="", help="comma-separated tags")
+    mem_add.add_argument("--source", default="", help="where it came from: file, doc, ledger#N")
+    mem_add.add_argument(
+        "--confidence",
+        choices=("unverified", "stated", "tested", "verified"),
+        default="unverified",
+    )
+    mem_add.add_argument("--memory", default=None)
+
+    mem_find = memory_sub.add_parser("find", help="search memory")
+    mem_find.add_argument("query")
+    mem_find.add_argument("-k", "--k", dest="k", type=int, default=5)
+    mem_find.add_argument("--memory", default=None)
+
+    mem_ctx = memory_sub.add_parser("context", help="a block of memory to put in front of a model")
+    mem_ctx.add_argument("query")
+    mem_ctx.add_argument("-k", "--k", dest="k", type=int, default=6)
+    mem_ctx.add_argument("--memory", default=None)
+
+    mem_digest = memory_sub.add_parser("digest", help="counts by kind, confidence and tag")
+    mem_digest.add_argument("--memory", default=None)
+
+    mem_audit = memory_sub.add_parser("audit", help="entries with no source, or unverified")
+    mem_audit.add_argument("--memory", default=None)
+
+    mem_import = memory_sub.add_parser("import", help="seed memory from the ledger or geometry")
+    mem_import.add_argument(
+        "--from", dest="import_from", choices=("ledger", "geometry"), required=True
+    )
+    mem_import.add_argument("--ledger", default=None, help="ledger path, for --from ledger")
+    mem_import.add_argument("--memory", default=None)
+
+    mem_export = memory_sub.add_parser("export", help="write the human-readable memory file")
+    mem_export.add_argument("--out", required=True)
+    mem_export.add_argument("--memory", default=None)
+
+    geometry_cmd = subparsers.add_parser("geometry", help="shapes and causal diagrams ARIA can check")
+    geometry_sub = geometry_cmd.add_subparsers(dest="geometry_action", required=True)
+
+    geo_shape = geometry_sub.add_parser("shape", help="properties of a shape")
+    geo_shape.add_argument("name")
+    geo_shape.add_argument("--size", type=float, default=1.0, help="edge length or radius")
+    geo_shape.add_argument("--sides", type=int, default=5, help="for a regular polygon")
+    geometry_sub.add_parser("list", help="the shapes that are known")
+
+    geo_penrose = geometry_sub.add_parser("penrose", help="structure of a Penrose diagram")
+    geo_penrose.add_argument("model", choices=("minkowski", "schwarzschild", "frw"))
+
+    geo_check = geometry_sub.add_parser("check", help="run every geometric identity")
+    geo_check.add_argument(
+        "--remember",
+        action="store_true",
+        help="file the verified facts into ARIA's memory",
+    )
+    geo_check.add_argument("--memory", default=None)
+
+    model_cmd = subparsers.add_parser(
+        "model", help="inspect a model file before trusting or training it"
+    )
+    model_sub = model_cmd.add_subparsers(dest="model_action", required=True)
+    model_inspect = model_sub.add_parser("inspect", help="read a GGUF header (no GPU needed)")
+    model_inspect.add_argument("path")
+
     train = subparsers.add_parser("train", help="train the step-ranking policy")
     train.add_argument("--epochs", type=int, default=80)
     train.add_argument("--save", default="aria/neural/weights.json")
@@ -454,6 +525,138 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 "\n".join(json.dumps(r, ensure_ascii=False) for r in records) + "\n"
             )
             print(f"wrote {len(records)} proven example(s) to {target}")
+            return 0
+
+        elif args.command == "memory":
+            from .llm import memory as memory_module
+
+            store = memory_module.MemoryStore(Path(args.memory) if args.memory else None)
+
+            if args.memory_action == "add":
+                entry = store.add(
+                    args.text,
+                    kind=args.kind,
+                    tags=[tag for tag in args.tags.split(",") if tag.strip()],
+                    source=args.source,
+                    confidence=args.confidence,
+                )
+                if args.json:
+                    print(json.dumps(entry.as_dict(), indent=2))
+                else:
+                    print(f"#{entry.id} ({entry.kind}, {entry.confidence}) {entry.text}")
+                    if not entry.source:
+                        print("  no source: `memory audit` will flag this until something verifies it")
+                return 0
+
+            if args.memory_action == "find":
+                hits = store.find(args.query, k=args.k)
+                if args.json:
+                    print(json.dumps([entry.as_dict() for entry in hits], indent=2))
+                elif not hits:
+                    print("nothing remembered matches that yet.")
+                else:
+                    for entry in hits:
+                        print(entry.line())
+                return 0
+
+            if args.memory_action == "context":
+                block = store.context(args.query, k=args.k)
+                print(block if block else "nothing remembered matches that yet.")
+                return 0
+
+            if args.memory_action == "digest":
+                print(json.dumps(store.digest(), indent=2))
+                return 0
+
+            if args.memory_action == "audit":
+                flagged = store.audit()
+                if args.json:
+                    print(json.dumps([entry.as_dict() for entry in flagged], indent=2))
+                elif not flagged:
+                    print("every memory has a source and a confidence above unverified.")
+                else:
+                    print(f"{len(flagged)} memory item(s) need backing:")
+                    for entry in flagged:
+                        print(f"  #{entry.id} ({entry.confidence}) {entry.text}")
+                return 0
+
+            if args.memory_action == "import":
+                if args.import_from == "ledger":
+                    from .llm.ledger import Ledger
+
+                    book = Ledger(Path(args.ledger) if args.ledger else None)
+                    added = store.import_ledger(book)
+                else:
+                    added = store.import_geometry()
+                fresh = len({entry.id for entry in added})
+                print(f"imported {fresh} memory item(s) into {store.path}")
+                return 0
+
+            target = Path(args.out)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(store.render_markdown())
+            print(f"wrote {len(store.entries())} memories to {target}")
+            return 0
+
+        elif args.command == "geometry":
+            from .geometry import PLATONIC, causal_checks, describe, diagram_text, shape_checks
+
+            if args.geometry_action == "list":
+                for solid in PLATONIC:
+                    print(f"{solid.name:<14} {solid.schlafli:<8} V={solid.vertices:<3} E={solid.edges:<3} F={solid.faces}")
+                print("circle, sphere, polygon (regular n-gon)")
+                return 0
+
+            if args.geometry_action == "shape":
+                try:
+                    data = describe(args.name, size=args.size, sides=args.sides)
+                except ValueError as error:
+                    print(f"error: {error}", file=sys.stderr)
+                    return 2
+                if args.json:
+                    print(json.dumps(data, indent=2))
+                else:
+                    width = max(len(key) for key in data)
+                    for key, value in data.items():
+                        print(f"  {key:<{width}}  {value}")
+                return 0
+
+            if args.geometry_action == "penrose":
+                print(diagram_text(args.model))
+                return 0
+
+            results = [("shape", claim, ok) for claim, ok in shape_checks()]
+            results += [("causal", claim, ok) for claim, ok in causal_checks()]
+            failures = [claim for _, claim, ok in results if not ok]
+            for group, claim, ok in results:
+                print(f"{'PASS' if ok else 'FAIL'}  [{group}] {claim}")
+            if args.remember and not failures:
+                from .llm.memory import MemoryStore
+
+                store = MemoryStore(Path(args.memory) if args.memory else None)
+                store.import_geometry()
+                print(f"filed {len(results)} verified facts in {store.path}")
+            return 0 if not failures else 1
+
+        elif args.command == "model":
+            from .llm.gguf import GGUFError, inspect_gguf
+
+            try:
+                info = inspect_gguf(args.path)
+            except (GGUFError, OSError) as error:
+                print(f"error: {error}", file=sys.stderr)
+                return 2
+
+            summary = info.summary()
+            if args.json:
+                print(json.dumps(summary, indent=2))
+                return 0
+            print(f"{summary['name'] or '<unnamed>'}  ({summary['architecture'] or 'unknown arch'})")
+            print(f"  parameters     {summary['parameters_human']}  ({summary['parameters']:,})")
+            print(f"  tensors        {summary['tensors']}")
+            print(f"  quantisation   {summary['dominant_quantisation']}  {summary['quantisations']}")
+            if summary["context_length"]:
+                print(f"  context        {summary['context_length']}")
             return 0
 
         elif args.command == "train":
