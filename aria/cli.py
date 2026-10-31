@@ -104,6 +104,34 @@ def build_parser() -> argparse.ArgumentParser:
     bench.add_argument("--markdown", default=None, help="write a markdown report")
     bench.add_argument("--json-out", default=None, help="write a JSON report")
 
+    ask = subparsers.add_parser(
+        "ask", help="run the math channel against a local OpenAI-compatible model"
+    )
+    ask.add_argument("prompt")
+    ask.add_argument(
+        "--endpoint",
+        default="http://127.0.0.1:8080/v1/chat/completions",
+        help="OpenAI-compatible chat completions URL (llama.cpp / LM Studio / Ollama)",
+    )
+    ask.add_argument("--model", default="local")
+    ask.add_argument(
+        "--grammar",
+        choices=("loose", "strict", "off"),
+        default="loose",
+        help="constrained-decoding grammar applied to the model's output",
+    )
+    ask.add_argument("--no-narrate", action="store_true", help="skip the prose explanation")
+    ask.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="use ARIA's parser as the translator (no model needed)",
+    )
+    ask.add_argument("--show-trace", action="store_true", help="show raw model exchanges")
+
+    grammar_cmd = subparsers.add_parser("grammar", help="print the GBNF grammar for a local model")
+    grammar_cmd.add_argument("--mode", choices=("loose", "strict"), default="loose")
+    grammar_cmd.add_argument("--out", default=None, help="write to a .gbnf file")
+
     train = subparsers.add_parser("train", help="train the step-ranking policy")
     train.add_argument("--epochs", type=int, default=80)
     train.add_argument("--save", default="aria/neural/weights.json")
@@ -237,6 +265,56 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 Path(args.json_out).parent.mkdir(parents=True, exist_ok=True)
                 Path(args.json_out).write_text(report.to_json())
                 print(f"wrote {args.json_out}")
+
+        elif args.command == "ask":
+            from .llm.client import OpenAICompatClient
+            from .llm.orchestrator import MathChannel, dry_run_client
+
+            grammar_mode = None if args.grammar == "off" else args.grammar
+            client = (
+                dry_run_client()
+                if args.dry_run
+                else OpenAICompatClient(endpoint=args.endpoint, model=args.model)
+            )
+            channel = MathChannel(
+                client, engine, grammar_mode=grammar_mode, narrate=not args.no_narrate and not args.dry_run
+            )
+            result = channel.ask(args.prompt)
+            if args.json:
+                payload = {
+                    "user_text": result.user_text,
+                    "contract": result.contract_text,
+                    "status": result.derivation.status if result.derivation else None,
+                    "solutions": [str(v) for v in result.derivation.solutions] if result.derivation else [],
+                    "explanation": result.explanation,
+                    "repairs": result.repairs,
+                    "error": result.error,
+                }
+                print(json.dumps(payload, indent=2))
+            else:
+                print(result.to_text())
+                if args.show_trace and result.trace:
+                    print("\nModel exchanges:")
+                    for line in result.trace:
+                        print(f"  {line}")
+            return 0 if result.ok else 1
+
+        elif args.command == "grammar":
+            from .llm.grammar import build_grammar, validate_grammar
+
+            text = build_grammar(args.mode)
+            ok, problems = validate_grammar(text)
+            if not ok:
+                print("grammar failed structural validation:", file=sys.stderr)
+                for problem in problems:
+                    print(f"  - {problem}", file=sys.stderr)
+                return 1
+            if args.out:
+                Path(args.out).write_text(text)
+                print(f"wrote {args.out} ({len(text.splitlines())} lines, {args.mode})")
+            else:
+                print(text, end="")
+            return 0
 
         elif args.command == "train":
             from .neural.train import evaluate_search, train_policy

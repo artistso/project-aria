@@ -187,11 +187,28 @@ def _sort_key(expr: Expr) -> Tuple:
 # ---------------------------------------------------------------------------
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=False)
 class Number(Expr):
-    """An exact rational (``Fraction``) or inexact (``float``) numeric literal."""
+    """An exact rational (``Fraction``) or inexact (``float``) numeric literal.
+
+    Compares equal to plain Python numbers (``Number(3) == 3``) so that results
+    such as ``derivation.solutions[0] == 3`` read naturally; the hash is
+    delegated to the numeric value so equal numbers hash equally.
+    """
 
     value: Any
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, Number):
+            return self.value == other.value
+        if isinstance(other, bool):
+            return NotImplemented
+        if isinstance(other, (int, float, Fraction)):
+            return self.value == other
+        return NotImplemented
+
+    def __hash__(self) -> int:
+        return hash(self.value)
 
     def __post_init__(self) -> None:
         value = self.value

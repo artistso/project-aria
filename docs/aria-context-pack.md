@@ -260,6 +260,20 @@ verifier, so all are equally sound.
 
 ---
 
+## 7b. Local-model math channel
+
+The model is only allowed to emit a three-line contract (`goal:` / `var:` /
+`expr:`); ARIA parses, solves and verifies; the model then narrates the verified
+trace. A GBNF grammar makes malformed output unrepresentable during decoding
+(`aria grammar --mode loose|strict`). The contract is validated again in Python,
+and a repair loop feeds the parse error back. `aria ask "..." --dry-run` exercises
+the whole loop with ARIA's own parser in place of the model, so tests never need
+weights. Entry points: `MathChannel(client).ask(text)`, `parse_contract`,
+`to_state`, `build_grammar`, `OpenAICompatClient` (stdlib HTTP, works with
+llama.cpp / LM Studio / Ollama).
+
+---
+
 ## 8. Public API
 
 ```python

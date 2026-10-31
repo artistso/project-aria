@@ -61,3 +61,11 @@ def parse_expr(text: str):
     from aria.core.parse import parse
 
     return parse(text)
+
+
+def test_numbers_compare_to_python_numbers():
+    assert num(3) == 3
+    assert num(Fraction(3, 1)) == 3
+    assert hash(num(1)) == hash(Fraction(1)) == hash(1.0)
+    assert num(3) != 4
+    assert num(3) != sym("x")

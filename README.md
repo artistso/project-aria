@@ -158,6 +158,7 @@ aria/
 Detailed design: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) ·
 Formal specification: [`docs/DESIGN_SPEC.md`](docs/DESIGN_SPEC.md) ·
 Prior art and positioning: [`docs/PRIOR_ART.md`](docs/PRIOR_ART.md) ·
+Local-model integration: [`docs/LLM_INTEGRATION.md`](docs/LLM_INTEGRATION.md) ·
 Reading it with an offline LLM: [`docs/OFFLINE_LLM_GUIDE.md`](docs/OFFLINE_LLM_GUIDE.md).
 
 ---
@@ -201,6 +202,28 @@ held-out ranking accuracy                        : 73.9%
 
 ---
 
+## Local models: the math-only channel
+
+ARIA can sit behind a local LLM so that **mathematics is the only intermediate
+language**. The model is grammar-constrained to emit a three-line contract
+(`goal` / `var` / `expr`) and nothing else; ARIA parses it, proves every step, and
+the model then narrates the verified trace. The model never states a mathematical
+fact, so it cannot invent one.
+
+```bash
+aria grammar --mode loose --out aria-loose.gbnf      # the output alphabet
+llama-server -m qwen3-4b-instruct-q4_k_m.gguf --port 8080 --grammar-file aria-loose.gbnf
+aria ask "solve for x in 2x + 4 = 10" --endpoint http://127.0.0.1:8080/v1/chat/completions
+aria ask "solve for x in 2x + 4 = 10" --dry-run      # no model needed
+```
+
+A 3–8B model is sufficient because the model only translates; the mathematics is
+done exactly. Full guide, including why a 2.8T model is the wrong target for a
+tablet and what can only be achieved by retraining:
+[`docs/LLM_INTEGRATION.md`](docs/LLM_INTEGRATION.md).
+
+---
+
 ## Positioning against prior art
 
 **This is not a new idea, and the README should not imply that it is.** ARIA
@@ -241,7 +264,7 @@ self-authored benchmark. Full lineage and the blunt comparison:
 - Dimensional analysis, nine physical laws, dimensional inversion
 - Structural embeddings and a trained step-ranking policy with policy-guided search
 - Benchmark harness with five reported metrics
-- CLI, 113 tests, CI workflow
+- CLI, 143 tests, CI workflow
 
 **Partial / deliberately bounded**
 
@@ -262,7 +285,7 @@ self-authored benchmark. Full lineage and the blunt comparison:
 ## Development
 
 ```bash
-pytest                                  # 113 tests
+pytest                                  # 143 tests
 aria bench                              # full suite + markdown report
 aria bench --suite solve --markdown benchmarks/report.md
 aria train --epochs 80 --eval           # retrain the step policy
