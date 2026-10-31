@@ -45,3 +45,17 @@ def test_bad_input_reports_error(capsys):
 def test_bench_subset(capsys):
     assert main(["bench", "--suite", "solve"]) == 0
     assert "exact_correctness" in capsys.readouterr().out
+
+
+def test_dataset_export(tmp_path, capsys):
+    target = tmp_path / "sft.jsonl"
+    assert main(["dataset", "sft", "--out", str(target), "--limit", "5"]) == 0
+    lines = target.read_text().strip().splitlines()
+    assert len(lines) == 5
+    assert "messages" in lines[0]
+
+
+def test_reward_command(capsys):
+    assert main(["reward", "--completion", "goal: solve\nvar: x\nexpr: 2x + 4 = 10"]) == 0
+    out = capsys.readouterr().out
+    assert "1.00" in out and "solved" in out

@@ -12,3 +12,5 @@ venv/
 htmlcov/
 benchmarks/*.json
 .DS_Store
+data/
+*.jsonl

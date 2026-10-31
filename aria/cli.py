@@ -132,6 +132,20 @@ def build_parser() -> argparse.ArgumentParser:
     grammar_cmd.add_argument("--mode", choices=("loose", "strict"), default="loose")
     grammar_cmd.add_argument("--out", default=None, help="write to a .gbnf file")
 
+    dataset = subparsers.add_parser(
+        "dataset", help="export training data mined from verified mathematics"
+    )
+    dataset.add_argument("kind", choices=("sft", "rl"))
+    dataset.add_argument("--out", required=True, help="output .jsonl path")
+    dataset.add_argument("--paraphrases", type=int, default=2, help="paraphrases per task")
+    dataset.add_argument("--limit", type=int, default=None)
+
+    reward_cmd = subparsers.add_parser(
+        "reward", help="score a model completion with the verifier (RL reward)"
+    )
+    reward_cmd.add_argument("--completion", default=None, help="contract text to score")
+    reward_cmd.add_argument("--file", default=None, help="file containing completions (one per line)")
+
     train = subparsers.add_parser("train", help="train the step-ranking policy")
     train.add_argument("--epochs", type=int, default=80)
     train.add_argument("--save", default="aria/neural/weights.json")
@@ -314,6 +328,50 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 print(f"wrote {args.out} ({len(text.splitlines())} lines, {args.mode})")
             else:
                 print(text, end="")
+            return 0
+
+        elif args.command == "dataset":
+            from .llm.dataset import build_rl_prompts, build_sft_examples, to_chat_jsonl
+
+            if args.kind == "sft":
+                examples = build_sft_examples(paraphrases_per_task=args.paraphrases)
+                if args.limit:
+                    examples = examples[: args.limit]
+                payload = to_chat_jsonl(examples)
+                count = len(examples)
+            else:
+                records = build_rl_prompts()
+                if args.limit:
+                    records = records[: args.limit]
+                payload = "\n".join(json.dumps(r, ensure_ascii=False) for r in records) + "\n"
+                count = len(records)
+            target = Path(args.out)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(payload)
+            print(f"wrote {count} {args.kind} record(s) to {target}")
+            return 0
+
+        elif args.command == "reward":
+            from .llm.dataset import score_completion
+
+            if args.file:
+                texts = [
+                    line.strip()
+                    for line in Path(args.file).read_text().splitlines()
+                    if line.strip()
+                ]
+            elif args.completion:
+                texts = [args.completion.replace("\\n", "\n")]
+            else:
+                texts = [sys.stdin.read()]
+
+            scored = [score_completion(text, engine) for text in texts]
+            if args.json:
+                print(json.dumps([b.as_dict() for b in scored], indent=2))
+            else:
+                for text, breakdown in zip(texts, scored):
+                    head = text.strip().splitlines()[0][:60] if text.strip() else "<empty>"
+                    print(f"{breakdown.total:.2f}  {breakdown.status:9s} {head}")
             return 0
 
         elif args.command == "train":

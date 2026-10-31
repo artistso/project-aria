@@ -159,6 +159,7 @@ Detailed design: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) ·
 Formal specification: [`docs/DESIGN_SPEC.md`](docs/DESIGN_SPEC.md) ·
 Prior art and positioning: [`docs/PRIOR_ART.md`](docs/PRIOR_ART.md) ·
 Local-model integration: [`docs/LLM_INTEGRATION.md`](docs/LLM_INTEGRATION.md) ·
+Weights and training: [`docs/WEIGHT_REWRITING.md`](docs/WEIGHT_REWRITING.md) ·
 Reading it with an offline LLM: [`docs/OFFLINE_LLM_GUIDE.md`](docs/OFFLINE_LLM_GUIDE.md).
 
 ---
@@ -224,6 +225,40 @@ tablet and what can only be achieved by retraining:
 
 ---
 
+## Rewriting the weights
+
+Everything above changes *behaviour* without touching a parameter. The next step
+up is to change the weights — and ARIA specifies exactly how, because the
+verifier is already a reward function:
+
+| completion | reward |
+|---|---|
+| invalid contract (didn't speak mathematics) | 0.00 |
+| parsed, rejected by the symbolic layer | 0.05 |
+| `partial` (some steps proven) | 0.30 + 0.40 × trace accuracy |
+| `refuted` (a decided counterexample) | 0.50 |
+| `solved`, every step proven | **1.00** |
+
+No labels, no human preference data. The rewrite rules become the reward and the
+reward becomes the gradient, so a weight update is steered toward provable
+mathematics.
+
+```bash
+aria dataset sft --out data/sft.jsonl      # 136 question → contract pairs
+aria dataset rl  --out data/rl.jsonl       # 46 prompts + reward id
+aria reward --completion "goal: solve
+var: x
+expr: 2x + 4 = 10"                        # -> 1.00 solved
+python training/sft_qlora.py --dry-run     # data check, no GPU needed
+```
+
+Reference QLoRA and GRPO scripts live in [`training/`](training/README.md); the
+reasoning — what a weight is, why model editing cannot install a procedure, and
+which hardware tier you actually need — is in
+[`docs/WEIGHT_REWRITING.md`](docs/WEIGHT_REWRITING.md).
+
+---
+
 ## Positioning against prior art
 
 **This is not a new idea, and the README should not imply that it is.** ARIA
@@ -264,7 +299,7 @@ self-authored benchmark. Full lineage and the blunt comparison:
 - Dimensional analysis, nine physical laws, dimensional inversion
 - Structural embeddings and a trained step-ranking policy with policy-guided search
 - Benchmark harness with five reported metrics
-- CLI, 143 tests, CI workflow
+- CLI, 158 tests, CI workflow
 
 **Partial / deliberately bounded**
 
@@ -285,7 +320,7 @@ self-authored benchmark. Full lineage and the blunt comparison:
 ## Development
 
 ```bash
-pytest                                  # 143 tests
+pytest                                  # 158 tests
 aria bench                              # full suite + markdown report
 aria bench --suite solve --markdown benchmarks/report.md
 aria train --epochs 80 --eval           # retrain the step policy
