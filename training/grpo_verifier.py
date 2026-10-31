@@ -21,6 +21,13 @@ Two signals are available:
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+# Make `aria` importable when this script runs from a plain copy of the tree
+# (no `pip install -e .` needed).
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 import argparse
 from typing import List
 
