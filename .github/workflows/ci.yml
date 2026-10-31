@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - python-version: "3.10"
+            extras: ""          # dependency-free verification path
+          - python-version: "3.11"
+            extras: "[dev]"     # SymPy backend + pytest
+          - python-version: "3.12"
+            extras: "[dev]"
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e "${{ matrix.extras }}"
+          pip install pytest
+      - name: Tests
+        run: pytest -q
+      - name: Benchmark
+        run: |
+          aria bench --markdown benchmarks/report.md --json-out benchmarks/report.json
+          python - <<'PY'
+          import json, sys
+          metrics = json.load(open("benchmarks/report.json"))["metrics"]
+          print(metrics)
+          # Regression gates: the suite must stay exact and sound.
+          assert metrics["exact_correctness"] >= 0.95, metrics
+          assert metrics["invalid_derivation_rate"] == 0.0, metrics
+          assert metrics["unit_consistency"] == 1.0, metrics
+          PY

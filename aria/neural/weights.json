@@ -1,0 +1,32 @@
+{
+  "weights": {
+    "bias": -0.10201889347423218,
+    "depth_delta": -0.5999167966816119,
+    "depth_shrank": 0.5867547007194148,
+    "functions_delta": -0.24394280008375224,
+    "goal_similarity": 0.152205874259623,
+    "goal_similarity_delta": 0.2521966850156795,
+    "negative_powers_delta": 0.7552421748731701,
+    "numbers_delta": -0.14187450930558337,
+    "rule=collect_like_terms": -1.7862471846735302,
+    "rule=common_factor": -2.1800847866912627,
+    "rule=difference_of_squares": -0.39920549685058515,
+    "rule=distribute": -0.38684270460060516,
+    "rule=exp_log_inverse": 1.3667818540695977,
+    "rule=isolate_variable_term": 0.11026856542563904,
+    "rule=log_power": 0.4851025228124827,
+    "rule=log_product": 1.6747846256482328,
+    "rule=log_quotient": 1.4312701193268977,
+    "rule=move_all_to_one_side": 0.804135368381115,
+    "rule=normalise": 1.7854212278309154,
+    "rule=quadratic_factor": -1.207458175960131,
+    "rule=reduce_rational": -2.1381417067121684,
+    "rule=simplify_radical": -1.7613659123814105,
+    "rule=trig_pythagorean": 1.3678992029259274,
+    "rule=zero_product_rule": 1.1946671671321694,
+    "self_similarity": 1.964762427266975,
+    "shared_symbols": 0.23603180103429686,
+    "size_delta": 0.2525925067219445,
+    "size_shrank": 2.210073948044399
+  }
+}
