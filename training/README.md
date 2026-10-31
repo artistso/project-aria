@@ -75,3 +75,20 @@ aria bench --json-out benchmarks/post-train.json
   to pick easy goals. Add goal-diversity to the RL prompt set and re-run.
 * These two GPU scripts are reference implementations; they are syntax-checked in
   CI but not executed there (no GPU).
+
+
+## Which signal?
+
+`grpo_verifier.py` defaults to `--signal pass`: 1.0 for a *demonstrated* process (contract
+parsed, every engine step verified, run decided), 0.0 otherwise. There is no partial credit,
+so there is nothing to farm. `--signal shaped` keeps the earlier 0.0-1.0 scale for
+continuity; its dry run prints both:
+
+```
+python training/grpo_verifier.py --dry-run --data data/rl.jsonl
+  signal: pass
+    perfect contract   pass=1.0 shaped=1.00
+    wrong process      pass=0.0 shaped=0.90
+```
+
+The second line is why `pass` is the default. See `docs/LEDGER.md`.

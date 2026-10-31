@@ -160,6 +160,8 @@ Formal specification: [`docs/DESIGN_SPEC.md`](docs/DESIGN_SPEC.md) ·
 Prior art and positioning: [`docs/PRIOR_ART.md`](docs/PRIOR_ART.md) ·
 Local-model integration: [`docs/LLM_INTEGRATION.md`](docs/LLM_INTEGRATION.md) ·
 Weights and training: [`docs/WEIGHT_REWRITING.md`](docs/WEIGHT_REWRITING.md) ·
+The ledger: [`docs/LEDGER.md`](docs/LEDGER.md) ·
+What the account already has: [`docs/SCAN_FINDINGS.md`](docs/SCAN_FINDINGS.md) ·
 Reading it with an offline LLM: [`docs/OFFLINE_LLM_GUIDE.md`](docs/OFFLINE_LLM_GUIDE.md).
 
 ---
@@ -259,6 +261,46 @@ which hardware tier you actually need — is in
 
 ---
 
+## The ledger: a record instead of a reward
+
+A reward is a number somebody hands you; it can be maximised without being understood.
+ARIA keeps a file instead — one line per attempt, written by the system, for the system:
+
+```json
+{"seq": 7, "question": "solve 9x - 3 = 24", "skill": "linear_equation",
+ "outcome": "solved", "verified": true, "demonstrated": true,
+ "steps": [{"rule": "move_all_to_one_side", "ok": true, ...}],
+ "first_error": "", "note": "subtract 24, then divide by 9",
+ "author": {"verdict": "verifier", "note": "model"}}
+```
+
+The verifier writes `outcome`, `steps` and `first_error`; the model writes only `note`.
+Nothing is scored. An attempt is *demonstrated* when every step the engine took verified
+and the run reached a decision — so there is no partial credit to farm, and
+`solve 9x - 3 = 24` repeated five times holds nothing, because the ledger counts **distinct
+problems**.
+
+Advancement is a school, not a staircase: twelve rungs (arithmetic → simplify → expand →
+linear → factor → quadratic → derivatives → log/exp → trig → identities → congruences),
+each held by three distinct proven problems, then college. A failure never costs a grade —
+it opens a *repair*, and advancement waits until the repair is clean. A rung the engine
+cannot decide is marked **dark**, not failed.
+
+```bash
+aria ledger next                        # the problem to attempt, plus its contract
+aria ledger record --question "solve 9x - 3 = 24" \
+                   --completion "goal: solve\nvar: x\nexpr: 9x - 3 = 24"
+aria ledger report                      # the grade card
+aria ledger sft --out data/ledger.jsonl # only the processes that were proven
+```
+
+The motivating measurement: the shaped reward pays **0.90** for `9/x - 3 = 24`, whose final
+step fails verification. The ledger refuses it. That comparison is a test
+(`test_the_scalar_reward_can_pay_for_a_process_that_fails`), not a claim.
+Full reasoning and falsifiers: [`docs/LEDGER.md`](docs/LEDGER.md).
+
+---
+
 ## Positioning against prior art
 
 **This is not a new idea, and the README should not imply that it is.** ARIA
@@ -299,7 +341,7 @@ self-authored benchmark. Full lineage and the blunt comparison:
 - Dimensional analysis, nine physical laws, dimensional inversion
 - Structural embeddings and a trained step-ranking policy with policy-guided search
 - Benchmark harness with five reported metrics
-- CLI, 158 tests, CI workflow
+- CLI, 208 tests, CI workflow
 
 **Partial / deliberately bounded**
 
@@ -320,7 +362,7 @@ self-authored benchmark. Full lineage and the blunt comparison:
 ## Development
 
 ```bash
-pytest                                  # 158 tests
+pytest                                  # 208 tests
 aria bench                              # full suite + markdown report
 aria bench --suite solve --markdown benchmarks/report.md
 aria train --epochs 80 --eval           # retrain the step policy

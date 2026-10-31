@@ -59,3 +59,87 @@ def test_reward_command(capsys):
     assert main(["reward", "--completion", "goal: solve\nvar: x\nexpr: 2x + 4 = 10"]) == 0
     out = capsys.readouterr().out
     assert "1.00" in out and "solved" in out
+
+
+def test_ledger_record_and_report(tmp_path, capsys):
+    book = tmp_path / "ledger.jsonl"
+    code = main(
+        [
+            "ledger",
+            "record",
+            "--question",
+            "solve 9x - 3 = 24",
+            "--completion",
+            "goal: solve\nvar: x\nexpr: 9x - 3 = 24",
+            "--ledger",
+            str(book),
+        ]
+    )
+    assert code == 0
+    assert "linear_equation" in capsys.readouterr().out
+
+    assert main(["ledger", "report", "--ledger", str(book)]) == 0
+    out = capsys.readouterr().out
+    assert "report card" in out
+    assert "linear_equation" in out
+
+
+def test_ledger_next_prints_a_contract(tmp_path, capsys):
+    book = tmp_path / "ledger.jsonl"
+    assert main(["ledger", "next", "--ledger", str(book)]) == 0
+    out = capsys.readouterr().out
+    assert "goal:" in out and "expr:" in out
+
+
+def test_ledger_json_report(tmp_path, capsys):
+    book = tmp_path / "ledger.jsonl"
+    main(
+        [
+            "--json",
+            "ledger",
+            "record",
+            "--question",
+            "solve 9x - 3 = 24",
+            "--completion",
+            "goal: solve\nvar: x\nexpr: 9x - 3 = 24",
+            "--ledger",
+            str(book),
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["skill"] == "linear_equation"
+    assert payload["author"] == {"verdict": "verifier", "note": "none"}
+
+
+def test_ledger_sft_exports_only_proven_work(tmp_path, capsys):
+    book = tmp_path / "ledger.jsonl"
+    main(
+        [
+            "ledger",
+            "record",
+            "--question",
+            "solve 9x - 3 = 24",
+            "--completion",
+            "goal: solve\nvar: x\nexpr: 9x - 3 = 24",
+            "--ledger",
+            str(book),
+        ]
+    )
+    main(
+        [
+            "ledger",
+            "record",
+            "--question",
+            "solve 9/x - 3 = 24",
+            "--completion",
+            "goal: solve\nvar: x\nexpr: 9/x - 3 = 24",
+            "--ledger",
+            str(book),
+        ]
+    )
+    capsys.readouterr()
+    out = tmp_path / "ledger.jsonl.sft"
+    assert main(["ledger", "sft", "--out", str(out), "--ledger", str(book)]) == 0
+    lines = out.read_text().strip().splitlines()
+    assert len(lines) == 1
+    assert "9/x" not in lines[0]

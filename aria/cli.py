@@ -146,6 +146,32 @@ def build_parser() -> argparse.ArgumentParser:
     reward_cmd.add_argument("--completion", default=None, help="contract text to score")
     reward_cmd.add_argument("--file", default=None, help="file containing completions (one per line)")
 
+    ledger_cmd = subparsers.add_parser(
+        "ledger", help="the record ARIA keeps of its own correct and incorrect work"
+    )
+    ledger_sub = ledger_cmd.add_subparsers(dest="ledger_action", required=True)
+
+    rec = ledger_sub.add_parser("record", help="attempt a problem and file the result")
+    rec.add_argument("--question", required=True, help="the problem, in words")
+    rec.add_argument("--completion", default=None, help="the contract that was produced")
+    rec.add_argument("--file", default=None, help="file holding the contract")
+    rec.add_argument(
+        "--note",
+        default="",
+        help="the model's own reflection -- the only field it authors",
+    )
+    rec.add_argument("--ledger", default=None, help="ledger path (default $ARIA_LEDGER)")
+
+    rep = ledger_sub.add_parser("report", help="print the grade card")
+    rep.add_argument("--ledger", default=None)
+
+    nxt = ledger_sub.add_parser("next", help="the problem to attempt next")
+    nxt.add_argument("--ledger", default=None)
+
+    led_sft = ledger_sub.add_parser("sft", help="export only the processes that were proven")
+    led_sft.add_argument("--out", required=True)
+    led_sft.add_argument("--ledger", default=None)
+
     train = subparsers.add_parser("train", help="train the step-ranking policy")
     train.add_argument("--epochs", type=int, default=80)
     train.add_argument("--save", default="aria/neural/weights.json")
@@ -372,6 +398,62 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 for text, breakdown in zip(texts, scored):
                     head = text.strip().splitlines()[0][:60] if text.strip() else "<empty>"
                     print(f"{breakdown.total:.2f}  {breakdown.status:9s} {head}")
+            return 0
+
+        elif args.command == "ledger":
+            from .llm import ledger as ledger_module
+
+            book = ledger_module.Ledger(Path(args.ledger) if args.ledger else None)
+
+            if args.ledger_action == "record":
+                if args.file:
+                    completion = Path(args.file).read_text()
+                elif args.completion:
+                    completion = args.completion.replace("\\n", "\n")
+                else:
+                    completion = sys.stdin.read()
+                entry = book.record(args.question, completion, note=args.note, engine=engine)
+                if args.json:
+                    print(json.dumps(entry.as_dict(), indent=2))
+                else:
+                    mark = "proven" if entry.demonstrated else entry.outcome
+                    print(f"#{entry.seq}  {entry.skill:<24} {mark}")
+                    if entry.first_error:
+                        print(f"  first break: {entry.first_error}")
+                    print(f"  filed in {book.path}")
+                return 0
+
+            if args.ledger_action == "report":
+                if args.json:
+                    print(json.dumps(book.card(), indent=2))
+                else:
+                    print(ledger_module.report(book))
+                return 0
+
+            if args.ledger_action == "next":
+                following = book.next_task()
+                if args.json:
+                    print(json.dumps(following, indent=2))
+                    return 0
+                if following is None:
+                    print("nothing left to be taught; write a general claim and try to break it.")
+                elif following["prompt"]:
+                    print(f"[{following['skill']}] {following['prompt']}")
+                    contract = ledger_module.contract_of(following["prompt"])
+                    if contract:
+                        print()
+                        print(contract)
+                else:
+                    print(f"[{following['skill']}] no unattempted problem left -- author one.")
+                return 0
+
+            records = book.to_sft_records()
+            target = Path(args.out)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(
+                "\n".join(json.dumps(r, ensure_ascii=False) for r in records) + "\n"
+            )
+            print(f"wrote {len(records)} proven example(s) to {target}")
             return 0
 
         elif args.command == "train":

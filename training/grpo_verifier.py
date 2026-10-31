@@ -1,11 +1,22 @@
-"""GRPO with the ARIA verifier as the reward function.
+"""GRPO with the ARIA verifier -- binary first, shaped only if you must.
 
-The reward is not a preference model: it parses the completion, runs the symbolic
-engine, and scores how much of the derivation was proven. See
-``aria/llm/dataset.py::score_completion`` for the exact scale.
+Two signals are available:
+
+``--signal pass`` (default)
+    ``1.0`` when the completion is a *demonstrated* process -- the contract
+    parsed, every step the engine took was verified, and the run reached a
+    decision -- otherwise ``0.0``. This is the ledger's rule
+    (``aria/llm/ledger.py``) and it is the one to use: there is no partial
+    credit, so there is nothing to farm.
+
+``--signal shaped``
+    The 0.0-1.0 scale in ``aria/llm/dataset.py::score_completion``. It is kept
+    for continuity, and it carries a known defect: a wrong rational solve
+    (``9/x - 3 = 24``) earns 0.90 because two of its three steps verified. The
+    ledger refuses it. Prefer ``pass``.
 
     python training/grpo_verifier.py --model out/qwen3-1.7b-aria-sft \
-        --data data/rl.jsonl --out out/qwen3-1.7b-aria-grpo
+        --data data/rl.jsonl --out out/qwen3-1.7b-aria-grpo --signal pass
 """
 
 from __future__ import annotations
@@ -23,6 +34,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-completion-length", type=int, default=96)
     parser.add_argument("--epochs", type=float, default=1.0)
     parser.add_argument("--lr", type=float, default=1e-5)
+    parser.add_argument(
+        "--signal",
+        choices=("pass", "shaped"),
+        default="pass",
+        help="pass = binary demonstrated/not (recommended); shaped = legacy 0..1 scale",
+    )
     parser.add_argument("--dry-run", action="store_true")
     return parser
 
@@ -34,12 +51,19 @@ def main() -> int:
 
     from aria.llm.dataset import reward as aria_reward
     from aria.llm.grammar import build_grammar
+    from aria.llm.ledger import judge
+
+    def pass_signal(text: str) -> float:
+        return 1.0 if judge(text).demonstrated else 0.0
 
     if args.dry_run:
         records = [json.loads(line) for line in open(args.data, encoding="utf-8") if line.strip()]
+        good = "goal: solve\nvar: x\nexpr: 2x + 4 = 10"
+        broken = "goal: solve\nvar: x\nexpr: 9/x - 3 = 24"
         print(f"rl prompts: {len(records)}")
-        print("reward of a perfect contract:", aria_reward("goal: solve\nvar: x\nexpr: 2x + 4 = 10"))
-        print("reward of an invalid contract:", aria_reward("goal: solve\nexpr: 2x +"))
+        print(f"signal: {args.signal}")
+        print("  perfect contract   pass=%.1f shaped=%.2f" % (pass_signal(good), aria_reward(good)))
+        print("  wrong process      pass=%.1f shaped=%.2f" % (pass_signal(broken), aria_reward(broken)))
         print("sample prompt:", records[0]["prompt"] if records else "<empty>")
         return 0
 
@@ -49,9 +73,11 @@ def main() -> int:
     dataset = load_dataset("json", data_files=args.data, split="train")
     print(f"rl prompts: {len(dataset)}")
 
+    score = pass_signal if args.signal == "pass" else aria_reward
+
     def verifier_reward(completions: List[str], **_: object) -> List[float]:
-        """TRL reward hook: map each sampled completion to [0, 1]."""
-        return [aria_reward(text) for text in completions]
+        """TRL reward hook: did the sampled completion prove its own process?"""
+        return [score(text) for text in completions]
 
     config = GRPOConfig(
         output_dir=args.out,
