@@ -37,9 +37,15 @@ reasoning before writing three lines, so run it with thinking disabled
 
 | purpose | repo | files to take | ≈ size |
 |---|---|---|---|
-| QLoRA SFT + GRPO base | `Qwen/Qwen3-1.7B` (**not** GGUF) | `config.json`, `generation_config.json`, `model-*.safetensors` (all shards), `model.safetensors.index.json`, `tokenizer.json`, `tokenizer_config.json`, `special_tokens_map.json`, `vocab.json`, `merges.txt` | 3.4 GB |
+| QLoRA SFT + GRPO base | `Qwen/Qwen3-1.7B` (**not** GGUF) | `config.json`, `generation_config.json`, `model-00001-of-00002.safetensors` (3.44 GB), `model-00002-of-00002.safetensors` (0.62 GB), `model.safetensors.index.json`, `tokenizer.json`, `tokenizer_config.json`, `special_tokens_map.json`, `vocab.json`, `merges.txt` | 4.08 GB |
 | faster 4-bit load (optional) | `unsloth/Qwen3-1.7B-unsloth-bnb-4bit` | the same set | ~1.2 GB |
 | 4B tier, if you go bigger | `Qwen/Qwen3-4B` | the same set | ~8 GB |
+| 4B, run on the tablet | `unsloth/Qwen3-4B-GGUF` | `Qwen3-4B-Q4_K_M.gguf` | 2.5 GB |
+
+Sizes above are from the repository listings, not estimates: `Qwen/Qwen3-1.7B` is two
+shards, **3.44 GB + 0.62 GB = 4.08 GB**. The same listing shows each large file has a
+**135-byte pointer** alongside it — that is the file you get from `git clone`, and it is
+why `aria model inspect` exists.
 
 **All shards or nothing.** A `model-00002-of-00003.safetensors` without `00001` and
 `00003` will not load, and the error arrives four minutes into a paid run.
