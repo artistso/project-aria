@@ -1,20 +1,10 @@
-"""Turning verified mathematics into a training signal.
+"""Training-data helpers and a retained legacy scalar diagnostic.
 
-This module is the bridge between ARIA's verification layer and *weight updates*.
-It produces three artifacts:
-
-* **SFT pairs** -- ``(user question → contract)`` in chat format, so a model can
-  be fine-tuned to translate instead of to answer.
-* **RL prompts** -- the same questions without answers, ready for a policy-gradient
-  loop.
-* **A verifier reward** -- :func:`reward` scores *any* completion by parsing it,
-  running the symbolic engine, and measuring how much of the derivation was
-  proven. No labels, no human preference data: the reward function is the
-  verifier itself.
-
-That last point is the whole idea in one sentence: **the rewrite rules become the
-reward, and the reward becomes the gradient.** A weight change driven by this
-signal is a weight change in the direction of provable mathematics.
+The accepted weight-update path is staged SFT from the ledger's demonstrated
+processes (``aria ledger sft``), after a school rung is held.  The benchmark
+SFT builder remains useful for format smoke tests.  RL prompt and scalar score
+helpers are retained only for historical comparison; they are not the school,
+not the accepted training objective, and not a correctness certificate.
 """
 
 from __future__ import annotations
@@ -199,7 +189,7 @@ def to_chat_jsonl(examples: Iterable[SftExample], system: str = SYSTEM_PROMPT) -
 
 
 def build_rl_prompts(tasks: Sequence[Task] = TASKS) -> List[dict]:
-    """Prompt-only records for policy-gradient training, with the reward id."""
+    """Legacy prompt-only records for scalar-reward experiments."""
     records: List[dict] = []
     for task in tasks:
         if task.suite == "units":
@@ -219,7 +209,7 @@ def build_rl_prompts(tasks: Sequence[Task] = TASKS) -> List[dict]:
 
 
 # ---------------------------------------------------------------------------
-# The reward function
+# Legacy scalar diagnostic (not used by the staged school)
 # ---------------------------------------------------------------------------
 
 
@@ -248,24 +238,13 @@ class RewardBreakdown:
 
 
 def score_completion(completion: str, engine: Optional[SymbolicEngine] = None) -> RewardBreakdown:
-    """Score a model completion using only the verifier (no ground truth).
+    """Return a legacy scalar for reproducing old reward experiments.
 
-    Scale:
-
-    ===============  ======  ==================================================
-    outcome          score   rationale
-    ===============  ======  ==================================================
-    invalid contract   0.00   the model did not speak mathematics
-    rejected goal      0.05   parsed, but the symbolic layer refused it
-    ``partial``        0.30   plus 0.40 × trace accuracy: provable steps pay
-    ``open``           0.20   plus 0.40 × trace accuracy
-    ``refuted``        0.50   a decided verdict is a real mathematical result
-    ``solved``         0.70   plus 0.30 × trace accuracy; 1.0 when fully proven
-    ===============  ======  ==================================================
-
-    The reward deliberately does **not** compare against expected answers: a
-    policy-gradient loop that needs labels is not a verifier, it is a classifier.
-    Answer quality is measured separately by the benchmark harness.
+    This diagnostic is deliberately not the ledger, not a training target for
+    ARIA's accepted curriculum, and not proof of correctness.  It is retained so
+    the historical failure can be measured: a broken rational solve can score
+    0.90 because the scalar gives partial credit to two passing steps.
+    Use :class:`aria.llm.ledger.Ledger` and its staged school instead.
     """
     engine = engine or SymbolicEngine()
     try:
@@ -312,10 +291,10 @@ def score_completion(completion: str, engine: Optional[SymbolicEngine] = None) -
 
 
 def reward(completion: str, engine: Optional[SymbolicEngine] = None) -> float:
-    """Scalar reward for a single completion (see :func:`score_completion`)."""
+    """Legacy scalar diagnostic; do not use for ledger advancement or default training."""
     return score_completion(completion, engine).total
 
 
 def reward_source() -> str:
-    """Import path usable in RL configs (TRL ``reward_funcs``)."""
+    """Legacy import path for explicitly opted-in scalar-reward experiments."""
     return "aria.llm.dataset:reward"

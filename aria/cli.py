@@ -127,6 +127,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="use ARIA's parser as the translator (no model needed)",
     )
     ask.add_argument("--show-trace", action="store_true", help="show raw model exchanges")
+    ask.add_argument(
+        "--context-budget-chars",
+        type=int,
+        default=None,
+        help=(
+            "maximum input-context characters; mandatory overflow holds before inference, "
+            "optional narration detail is dropped only as whole, recoverable blocks"
+        ),
+    )
 
     grammar_cmd = subparsers.add_parser("grammar", help="print the GBNF grammar for a local model")
     grammar_cmd.add_argument("--mode", choices=("loose", "strict"), default="loose")
@@ -141,7 +150,7 @@ def build_parser() -> argparse.ArgumentParser:
     dataset.add_argument("--limit", type=int, default=None)
 
     reward_cmd = subparsers.add_parser(
-        "reward", help="score a model completion with the verifier (RL reward)"
+        "reward", help="legacy scalar diagnostic for a completion (not a training objective)"
     )
     reward_cmd.add_argument("--completion", default=None, help="contract text to score")
     reward_cmd.add_argument("--file", default=None, help="file containing completions (one per line)")
@@ -168,9 +177,17 @@ def build_parser() -> argparse.ArgumentParser:
     nxt = ledger_sub.add_parser("next", help="the problem to attempt next")
     nxt.add_argument("--ledger", default=None)
 
-    led_sft = ledger_sub.add_parser("sft", help="export only the processes that were proven")
+    led_sft = ledger_sub.add_parser(
+        "sft", help="export proven processes from rungs held by the school"
+    )
     led_sft.add_argument("--out", required=True)
     led_sft.add_argument("--ledger", default=None)
+    led_sft.add_argument("--max-level", type=int, default=None, help="cap the export at this rung")
+    led_sft.add_argument(
+        "--include-learning",
+        action="store_true",
+        help="include proven examples from rungs not yet held (explicit bootstrap only)",
+    )
 
     memory_cmd = subparsers.add_parser("memory", help="the text memory ARIA keeps for itself")
     memory_sub = memory_cmd.add_subparsers(dest="memory_action", required=True)
@@ -178,7 +195,9 @@ def build_parser() -> argparse.ArgumentParser:
     mem_add = memory_sub.add_parser("add", help="remember something")
     mem_add.add_argument("text", help="what to remember")
     mem_add.add_argument(
-        "--kind", choices=("fact", "procedure", "correction", "source"), default="fact"
+        "--kind",
+        choices=("fact", "procedure", "correction", "source", "preference"),
+        default="fact",
     )
     mem_add.add_argument("--tags", default="", help="comma-separated tags")
     mem_add.add_argument("--source", default="", help="where it came from: file, doc, ledger#N")
@@ -189,6 +208,26 @@ def build_parser() -> argparse.ArgumentParser:
     )
     mem_add.add_argument("--memory", default=None)
 
+    mem_correct = memory_sub.add_parser(
+        "correct", help="append a sourced correction that supersedes one memory"
+    )
+    mem_correct.add_argument("memory_id", type=int)
+    mem_correct.add_argument("text", help="the corrected memory text")
+    mem_correct.add_argument("--source", default="user correction")
+    mem_correct.add_argument("--tags", default="", help="comma-separated tags")
+    mem_correct.add_argument(
+        "--kind",
+        choices=("fact", "procedure", "correction", "source", "preference"),
+        default=None,
+        help="replacement kind (defaults to preference when correcting a preference)",
+    )
+    mem_correct.add_argument(
+        "--confidence",
+        choices=("unverified", "stated", "tested", "verified"),
+        default="stated",
+    )
+    mem_correct.add_argument("--memory", default=None)
+
     mem_find = memory_sub.add_parser("find", help="search memory")
     mem_find.add_argument("query")
     mem_find.add_argument("-k", "--k", dest="k", type=int, default=5)
@@ -197,6 +236,7 @@ def build_parser() -> argparse.ArgumentParser:
     mem_ctx = memory_sub.add_parser("context", help="a block of memory to put in front of a model")
     mem_ctx.add_argument("query")
     mem_ctx.add_argument("-k", "--k", dest="k", type=int, default=6)
+    mem_ctx.add_argument("--max-chars", type=int, default=1600)
     mem_ctx.add_argument("--memory", default=None)
 
     mem_digest = memory_sub.add_parser("digest", help="counts by kind, confidence and tag")
@@ -388,20 +428,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 else OpenAICompatClient(endpoint=args.endpoint, model=args.model)
             )
             channel = MathChannel(
-                client, engine, grammar_mode=grammar_mode, narrate=not args.no_narrate and not args.dry_run
+                client,
+                engine,
+                grammar_mode=grammar_mode,
+                narrate=not args.no_narrate and not args.dry_run,
+                context_budget=args.context_budget_chars,
             )
             result = channel.ask(args.prompt)
             if args.json:
-                payload = {
-                    "user_text": result.user_text,
-                    "contract": result.contract_text,
-                    "status": result.derivation.status if result.derivation else None,
-                    "solutions": [str(v) for v in result.derivation.solutions] if result.derivation else [],
-                    "explanation": result.explanation,
-                    "repairs": result.repairs,
-                    "error": result.error,
-                }
-                print(json.dumps(payload, indent=2))
+                print(json.dumps(result.as_dict(), indent=2))
             else:
                 print(result.to_text())
                 if args.show_trace and result.trace:
@@ -518,13 +553,19 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     print(f"[{following['skill']}] no unattempted problem left -- author one.")
                 return 0
 
-            records = book.to_sft_records()
+            records = book.to_sft_records(
+                held_only=not args.include_learning,
+                max_level=args.max_level,
+            )
             target = Path(args.out)
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(
                 "\n".join(json.dumps(r, ensure_ascii=False) for r in records) + "\n"
             )
-            print(f"wrote {len(records)} proven example(s) to {target}")
+            stage = f"through rung {args.max_level}" if args.max_level is not None else "all held rungs"
+            if args.include_learning:
+                stage += " plus learning rungs"
+            print(f"wrote {len(records)} proven example(s) from {stage} to {target}")
             return 0
 
         elif args.command == "memory":
@@ -548,6 +589,24 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                         print("  no source: `memory audit` will flag this until something verifies it")
                 return 0
 
+            if args.memory_action == "correct":
+                entry = store.correct(
+                    args.memory_id,
+                    args.text,
+                    source=args.source,
+                    confidence=args.confidence,
+                    tags=[tag for tag in args.tags.split(",") if tag.strip()],
+                    kind=args.kind,
+                )
+                if args.json:
+                    print(json.dumps(entry.as_dict(), indent=2))
+                else:
+                    print(
+                        f"#{entry.id} corrects memory #{entry.supersedes}: "
+                        f"({entry.kind}, {entry.confidence}) {entry.text}"
+                    )
+                return 0
+
             if args.memory_action == "find":
                 hits = store.find(args.query, k=args.k)
                 if args.json:
@@ -560,8 +619,23 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 return 0
 
             if args.memory_action == "context":
-                block = store.context(args.query, k=args.k)
-                print(block if block else "nothing remembered matches that yet.")
+                try:
+                    pack = store.context_pack(args.query, k=args.k, max_chars=args.max_chars)
+                except memory_module.MemoryContextBudgetError as error:
+                    if args.json:
+                        print(json.dumps(error.as_dict(), indent=2))
+                    else:
+                        print(str(error), file=sys.stderr)
+                    return 2
+                if args.json:
+                    print(json.dumps(pack.as_dict(), indent=2))
+                elif pack.text:
+                    print(pack.text)
+                    if pack.omitted:
+                        ids = ", ".join(f"#{entry.id}" for entry in pack.omitted)
+                        print(f"\nOmitted memory ids: {ids}; rerun with a larger --max-chars to recover.")
+                else:
+                    print("nothing remembered matches that yet.")
                 return 0
 
             if args.memory_action == "digest":

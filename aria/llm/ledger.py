@@ -1,10 +1,10 @@
 """The ledger: a record the system keeps of its own correct and incorrect work.
 
-A reward is a number somebody hands you. A ledger is a record you keep. The
-difference is not cosmetic: a number can be maximised without being understood,
-while a record of *process* -- which rule was applied, whether the engine could
-check it, and where it first broke -- cannot. This module replaces the scalar
-with that record, and replaces the score with a school.
+A scalar training reward can be maximised without being understood; that is
+different from spontaneous human appreciation or preference. A ledger is a record
+of process -- which rule was applied, whether the engine could check it, and where
+it first broke. This module uses that record and a staged school as the training
+organizer, without treating human silence as a negative signal.
 
 Four rules make the record trustworthy:
 
@@ -20,7 +20,8 @@ Four rules make the record trustworthy:
 3. **Advancement is by demonstrated process, held over distinct problems.**
    Three clean, distinct proofs at a rung -- not three attempts, not a high
    average -- hold that rung. One failure does not remove a grade; it puts the
-   rung into *repair*, and advancement waits until the repair is clean twice.
+   rung into *repair* without erasing its held grade; the repair closes after two
+   new clean demonstrations on distinct expressions.
 
 4. **A rung the engine cannot decide is marked ``blocked``, not failed.**
    Congruences currently come back ``partial``: ARIA cannot close them. The
@@ -71,9 +72,10 @@ DEFAULT_PATH = Path(
 #: Graduation: every gradable rung held.
 COLLEGE = 13
 
-#: How much clean, distinct work holds a rung.
+#: How much clean, distinct work holds a rung; a repair needs two new clean examples.
 CLEAN_TO_HOLD = 3
 DISTINCT_TO_HOLD = 3
+CLEAN_TO_CLEAR_REPAIR = 2
 
 #: Outcomes that mean "the engine stopped honestly" rather than "the run broke".
 _UNDECIDED = ("partial", "open", "rejected")
@@ -388,6 +390,9 @@ class SkillRecord:
     demonstrated: int = 0
     streak: int = 0
     distinct: int = 0
+    held_once: bool = False
+    repair_streak: int = 0
+    repair_distinct: int = 0
     last_seq: int = 0
     last_error: str = ""
     outcomes: Tuple[str, ...] = ()
@@ -463,27 +468,48 @@ class Ledger:
             name: SkillRecord(skill=name) for name in LEVEL_OF
         }
         seen: Dict[str, set] = {name: set() for name in LEVEL_OF}
+        repair_seen: Dict[str, set] = {name: set() for name in LEVEL_OF}
         outcomes: Dict[str, List[str]] = {name: [] for name in LEVEL_OF}
+        repair_open = {name: False for name in LEVEL_OF}
 
         for entry in self.entries():
             record = records.get(entry.skill)
             if record is None:
                 continue
+            skill = entry.skill
             record.attempts += 1
             record.last_seq = entry.seq
-            outcomes[entry.skill].append(entry.outcome)
+            outcomes[skill].append(entry.outcome)
             if entry.demonstrated:
                 record.demonstrated += 1
                 record.streak += 1
-                seen[entry.skill].add(entry.expression)
+                seen[skill].add(entry.expression)
+                if repair_open[skill]:
+                    record.repair_streak += 1
+                    repair_seen[skill].add(entry.expression)
+                    if (
+                        record.repair_streak >= CLEAN_TO_CLEAR_REPAIR
+                        and len(repair_seen[skill]) >= CLEAN_TO_CLEAR_REPAIR
+                    ):
+                        repair_open[skill] = False
+                elif not record.held_once and (
+                    record.streak >= CLEAN_TO_HOLD
+                    and len(seen[skill]) >= DISTINCT_TO_HOLD
+                ):
+                    record.held_once = True
             else:
                 record.streak = 0
                 record.last_error = entry.first_error or entry.outcome
+                if record.held_once:
+                    repair_open[skill] = True
+                    record.repair_streak = 0
+                    repair_seen[skill].clear()
 
         for name, record in records.items():
             record.distinct = len(seen[name])
+            record.repair_distinct = len(repair_seen[name])
             record.outcomes = tuple(outcomes[name])
-            record.state = _state_of(record)
+            record.state = _state_of(record, repair_open=repair_open[name])
         return records
 
     def grade(self) -> int:
@@ -493,13 +519,16 @@ class Ledger:
     def card(self) -> dict:
         records = self.skills()
         grade = grade_of(records)
+        held = [name for name in SCHOOL_SKILLS if records[name].held_once]
+        blocked = [name for name in SCHOOL_SKILLS if records[name].state == "blocked"]
+        open_repairs = [name for name in SCHOOL_SKILLS if records[name].state == "repair"]
         return {
             "grade": grade,
-            "college": grade >= COLLEGE,
+            "college": grade >= COLLEGE and not open_repairs,
             "ledger": str(self.path),
             "entries": len(self.entries()),
-            "held": [name for name in SCHOOL_SKILLS if records[name].state == "held"],
-            "blocked": [name for name in SCHOOL_SKILLS if records[name].state == "blocked"],
+            "held": held,
+            "blocked": blocked,
             "skills": {
                 name: {
                     "level": record.level,
@@ -508,13 +537,14 @@ class Ledger:
                     "demonstrated": record.demonstrated,
                     "distinct": record.distinct,
                     "streak": record.streak,
+                    "held_once": record.held_once,
+                    "repair_streak": record.repair_streak,
+                    "repair_distinct": record.repair_distinct,
                     "last_error": record.last_error,
                 }
                 for name, record in records.items()
             },
-            "open_repairs": [
-                name for name in SCHOOL_SKILLS if records[name].state == "repair"
-            ],
+            "open_repairs": open_repairs,
         }
 
     # -- curriculum --------------------------------------------------------
@@ -575,34 +605,53 @@ class Ledger:
 
     # -- training data -----------------------------------------------------
 
-    def to_sft_records(self) -> List[dict]:
-        """Q&A pairs where the *process* was proven -- nothing else.
+    def to_sft_records(
+        self,
+        *,
+        held_only: bool = True,
+        max_level: Optional[int] = None,
+    ) -> List[dict]:
+        """Export proven Q&A pairs from the staged school.
+
+        By default, only skills already held by the ledger's distinct-proof
+        advancement rule are eligible. ``max_level`` can keep a training export
+        at an earlier school stage. ``held_only=False`` is an explicit bootstrap
+        or audit escape hatch; it still exports only demonstrated processes.
 
         Failed attempts are never targets. A failure is only included when a
         later attempt on the same expression succeeded: then the corrected pair
         is what gets learned, and the earlier error stays in the ledger as
         history rather than as a lesson.
         """
+        held_skills = {
+            name for name, record in self.skills().items() if record.held_once
+        }
         good: Dict[str, dict] = {}
         for entry in sorted(self.entries(), key=lambda e: e.seq):
-            if entry.verified and entry.contract:
-                good[entry.expression] = {
-                    "messages": [
-                        {"role": "system", "content": SYSTEM_PROMPT},
-                        {"role": "user", "content": entry.question},
-                        {"role": "assistant", "content": entry.contract},
-                    ],
-                    "skill": entry.skill,
-                    "level": LEVEL_OF.get(entry.skill, 0),
-                }
+            level = LEVEL_OF.get(entry.skill, 0)
+            if not entry.verified or not entry.contract or level == 0:
+                continue
+            if held_only and entry.skill not in held_skills:
+                continue
+            if max_level is not None and level > max_level:
+                continue
+            good[entry.expression] = {
+                "messages": [
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": entry.question},
+                    {"role": "assistant", "content": entry.contract},
+                ],
+                "skill": entry.skill,
+                "level": level,
+            }
         return sorted(good.values(), key=lambda r: (r["level"], r["skill"]))
 
 
-def _state_of(record: SkillRecord) -> str:
-    if record.streak >= CLEAN_TO_HOLD and record.distinct >= DISTINCT_TO_HOLD:
-        return "held"
-    if record.attempts and record.demonstrated and record.streak == 0:
+def _state_of(record: SkillRecord, *, repair_open: bool = False) -> str:
+    if repair_open:
         return "repair"
+    if record.held_once:
+        return "held"
     if record.attempts and not record.demonstrated and set(record.outcomes) <= set(_UNDECIDED):
         # Never wrong, never finished: the engine cannot decide this rung yet.
         return "blocked"
@@ -610,10 +659,14 @@ def _state_of(record: SkillRecord) -> str:
 
 
 def grade_of(records: Dict[str, SkillRecord]) -> int:
-    """Level of the first rung that is neither held nor blocked; 0 if below grade 1."""
+    """First never-held rung, or ``COLLEGE`` once all gradable rungs were held.
+
+    A later failure opens a repair without erasing the historical held grade;
+    graduation itself remains suspended until that repair closes.
+    """
     for level, name, _, _ in CURRICULUM:
         record = records.get(name)
-        if record is None or record.state not in ("held", "blocked"):
+        if record is None or not (record.held_once or record.state == "blocked"):
             return level
     return COLLEGE
 
@@ -639,10 +692,15 @@ def report(ledger: Ledger) -> str:
     grade = card["grade"]
     held = len(card["held"])
     dark = len(card["blocked"])
-    if grade >= COLLEGE:
+    if card["college"]:
         headline = (
             f"graduated (college) -- {held} of {len(SCHOOL_SKILLS)} rungs held"
             + (f", {dark} dark" if dark else "")
+        )
+    elif grade >= COLLEGE:
+        headline = (
+            f"all gradable rungs held, but graduation is suspended for "
+            f"{len(card['open_repairs'])} open repair(s)"
         )
     else:
         headline = f"studying grade {grade} -- {held} of {len(SCHOOL_SKILLS)} rungs held"
@@ -663,6 +721,11 @@ def report(ledger: Ledger) -> str:
             tally += f", {data['distinct']} distinct"
         if data["streak"]:
             tally += f", streak {data['streak']}"
+        if data["state"] == "repair":
+            tally += (
+                f", repair {data['repair_streak']}/{CLEAN_TO_CLEAR_REPAIR} clean, "
+                f"{data['repair_distinct']}/{CLEAN_TO_CLEAR_REPAIR} distinct"
+            )
         line = f"  {level:>2}  {skill:<24} {mark} {tally}"
         if data["state"] == "repair" and data["last_error"]:
             line += f"\n      last break: {data['last_error'][:110]}"

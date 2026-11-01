@@ -20,6 +20,25 @@ def test_contract_tolerates_markdown_fences_and_extra_blank_lines():
     assert request.goal == "simplify"
 
 
+@pytest.mark.parametrize(
+    "raw,reason",
+    [
+        ("Here is the answer\ngoal: simplify\nexpr: x + 1", "unexpected content"),
+        ("goal: simplify\nnote: x + 1\nexpr: x + 1", "unexpected contract field"),
+        ("goal: simplify\ngoal: factor\nexpr: x + 1", "duplicate 'goal'"),
+        ("expr: x + 1\ngoal: simplify", "ordered as goal"),
+    ],
+)
+def test_contract_rejects_untrusted_extra_duplicate_or_misordered_content(raw, reason):
+    with pytest.raises(ContractError, match=reason):
+        parse_contract(raw)
+
+
+def test_variable_is_not_allowed_for_goals_that_do_not_use_one():
+    with pytest.raises(ContractError, match="does not accept a 'var:'"):
+        parse_contract("goal: simplify\nvar: x\nexpr: x + 1")
+
+
 def test_expression_is_validated_not_trusted():
     with pytest.raises(ContractError, match="does not parse"):
         parse_contract("goal: simplify\nexpr: x +")

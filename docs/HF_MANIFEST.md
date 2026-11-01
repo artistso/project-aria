@@ -1,140 +1,75 @@
-# What to download, and where to put it
+# Model source and weight-file manifest
 
-A short, concrete list — sized to the hardware that was actually measured (11.72 GB RAM,
-~2 GB VRAM, Mali-G720 GPU with no CUDA) and to what ARIA needs a model to do: **emit a
-three-line contract, not solve anything.**
+## Specified ARIA source
 
-Three rules decide everything below.
+The project-specified model source is Hugging Face
+`meshllm/Kimi-K3-UD-Q4_K_XL-layers`. The requested retrieval method is `git clone`:
 
-1. **The tablet infers. A rented GPU trains.** No mobile GPU trains a transformer; the
-   Mali chip is not reachable from llama.cpp either, so tablet inference is CPU-only.
-2. **A 4-bit GGUF cannot be trained.** QLoRA starts from full-precision weights and
-   quantises on the fly. GGUFs are for running, `safetensors` are for training.
-3. **`git clone` of a model repo downloads LFS pointers**, ~130-byte text files that look
-   like weights. Use the downloader, and check the result with `aria model inspect`.
-
----
-
-## 1. The list
-
-### Tier A — run on the tablet (llama.cpp, one GGUF each)
-
-| purpose | repo | file to take | ≈ size |
-|---|---|---|---|
-| **translate** (the default) | `Qwen/Qwen3-1.7B-GGUF` (or `unsloth/Qwen3-1.7B-GGUF`) | `Qwen3-1.7B-Q4_K_M.gguf` | 1.1 GB |
-| better translation, still fits | `Qwen/Qwen3-4B-GGUF` | `Qwen3-4B-Q4_K_M.gguf` | 2.5 GB |
-| smoke tests / low memory | `Qwen/Qwen3-0.6B-GGUF` | `Qwen3-0.6B-Q4_K_M.gguf` | 0.4 GB |
-| fallback family | `Qwen/Qwen2.5-1.5B-Instruct-GGUF` | `qwen2.5-1.5b-instruct-q4_k_m.gguf` | 1.0 GB |
-
-Take **one** of the first two. File names follow the standard pattern; if a repo names
-them differently there is still exactly one `Q4_K_M` file — take that one.
-
-Note on Qwen3: it defaults to "thinking" mode. A translator must not spend 400 tokens
-reasoning before writing three lines, so run it with thinking disabled
-(`enable_thinking: false` in the template, or `/no_think`).
-
-### Tier B — train (rented GPU: one 16–24 GB card)
-
-| purpose | repo | files to take | ≈ size |
-|---|---|---|---|
-| QLoRA SFT + GRPO base | `Qwen/Qwen3-1.7B` (**not** GGUF) | `config.json`, `generation_config.json`, `model-00001-of-00002.safetensors` (3.44 GB), `model-00002-of-00002.safetensors` (0.62 GB), `model.safetensors.index.json`, `tokenizer.json`, `tokenizer_config.json`, `special_tokens_map.json`, `vocab.json`, `merges.txt` | 4.08 GB |
-| faster 4-bit load (optional) | `unsloth/Qwen3-1.7B-unsloth-bnb-4bit` | the same set | ~1.2 GB |
-| 4B tier, if you go bigger | `Qwen/Qwen3-4B` | the same set | ~8 GB |
-| 4B, run on the tablet | `unsloth/Qwen3-4B-GGUF` | `Qwen3-4B-Q4_K_M.gguf` | 2.5 GB |
-
-Sizes above are from the repository listings, not estimates: `Qwen/Qwen3-1.7B` is two
-shards, **3.44 GB + 0.62 GB = 4.08 GB**. The same listing shows each large file has a
-**135-byte pointer** alongside it — that is the file you get from `git clone`, and it is
-why `aria model inspect` exists.
-
-**All shards or nothing.** A `model-00002-of-00003.safetensors` without `00001` and
-`00003` will not load, and the error arrives four minutes into a paid run.
-
-### Tier C — only if memory retrieval proves too blunt
-
-| purpose | repo | file | ≈ size |
-|---|---|---|---|
-| semantic search over the memory file | `nomic-ai/nomic-embed-text-v1.5-GGUF` | `nomic-embed-text-v1.5.Q4_K_M.gguf` (or F16) | 0.09–0.27 GB |
-
-Not needed yet. Lexical retrieval (`aria memory find`) is explainable and runs anywhere;
-add this only if paraphrases are actually being missed.
-
-### What not to download
-
-* **Kimi K3 in any form.** 2.8 T parameters, ~1.4 TB, 64+ accelerators. It is a teacher to
-  distil *from*, never a file to fetch here.
-* **Any GGUF for training.** See rule 2.
-* **70B / 32B quantised "just in case".** It will not fit in 11.7 GB with the OS running.
-* **Vision/mmproj files.** Nothing in ARIA reads images yet.
-
----
-
-## 2. Where to put it
-
-| what | destination | why |
-|---|---|---|
-| GGUF files (Tier A) | **Google Drive**, folder `ARIA/models/` | too big for GitHub; I can list Drive and read sizes directly |
-| full-precision shards (Tier B) | **the training machine**, not Drive | 3.4 GB round-trips are wasted time; upload only if you want me to check them |
-| manifests, `*.jsonl`, docs, memory, ledger | **GitHub** (`artistso/project-aria`) | small text, versioned, works with `git` |
-| things you want me to read and cite | **Drive or Docs** | the connector reads both |
-
-Suggested Drive layout:
-
-```
-ARIA/
-  models/     Qwen3-1.7B-Q4_K_M.gguf
-  data/       ledger.jsonl, memory.jsonl, sft.jsonl, rl.jsonl
-  docs/       aria-context-pack.md, aria-report-card.md
+```bash
+git clone https://huggingface.co/meshllm/Kimi-K3-UD-Q4_K_XL-layers
 ```
 
-GitHub limits matter: a single file over 100 MB is rejected, and the LFS workaround puts
-**pointers** in the clone — the exact trap that produced the `gitattributes.txt` earlier in
-this project. So: weights in Drive, text in Git, and never the two mixed.
+**Unverified:** Hugging Face was unreachable from this sandbox. I did not verify
+that this repository exists, inspect its files or license, confirm its size or
+format, or run it. The identifier and command preserve the requested source; they
+are not a claim that the repository exists. Do not substitute another model
+silently.
 
----
+If the clone succeeds, inspect the resulting directory before using it. A Git
+LFS-managed repository may initially contain pointer files; a pointer is not a
+weight shard. If LFS pointers are present and Git LFS is available, fetch the
+large-file contents from the cloned repository, then check file sizes, the model
+configuration, tokenizer, shard index, and license. The repository name alone
+does not establish whether it is a GGUF, a trainable Hugging Face checkpoint,
+or an inference-only artifact.
 
-## 3. How I check what you send
+```bash
+cd Kimi-K3-UD-Q4_K_XL-layers
+# Only if the checked-out files are Git LFS pointers:
+git lfs pull
+```
 
-1. **Size, from Drive metadata.** An LFS pointer is ~130 bytes; a real 1.7B Q4 file is
-   ~1.1 GB. This alone catches the common failure.
-2. **Header, when a local copy exists.** `aria model inspect <file>` parses the GGUF
-   header with no GPU and no runtime and prints the parameter count, tensor count,
-   dominant quantisation, architecture and context length:
+Do not commit model weights to this repository. Use external storage for large
+artifacts and keep a text manifest (source revision, file sizes, hashes, license
+and training/inference compatibility) with the experiment.
 
-   ```
-   $ aria model inspect Qwen3-1.7B-Q4_K_M.gguf
-   Qwen3-1.7B  (qwen3)
-     parameters     1.72B  (1,720,000,000)
-     tensors        290
-     quantisation   q4_k
-     context        40960
-   ```
+## Separate reference models
 
-   If it says "this is a Git LFS pointer, not a model", the download was a clone.
-3. **Shard completeness, for Tier B.** The count of `model-*.safetensors` must equal the
-   count in `model.safetensors.index.json`.
+The repository has used Qwen3 models as small **reference experiments** for the
+LLM contract interface and for exercising the QLoRA script. Those examples do
+not replace the specified Kimi source. A Qwen base can be used only when the
+experiment is explicitly labelled as such.
 
-I cannot reach Hugging Face from this sandbox (the TLS handshake is blocked), so
-**anything that must come from HF has to be fetched by you** — Drive is the reliable route
-for me to see it.
-
----
-
-## 4. What the run will cost, roughly
-
-| stage | hardware | wall clock |
+| use | example | required distinction |
 |---|---|---|
-| SFT on the ledger's proven work (a few hundred pairs, 2 epochs) | 1× 16 GB (T4/A4000 class) | 20–40 min |
-| GRPO with `--signal pass` (46 prompts, 8 generations) | 1× 24 GB (A10/L4) | 1–3 h |
-| evaluation (`eval_contract.py` against the endpoint) | any | minutes |
+| local contract-translation smoke test | a compatible Qwen GGUF served by llama.cpp | inference example, not the specified ARIA source |
+| SFT / QLoRA code-path reference | `Qwen/Qwen3-1.7B` or another compatible full model | separate base; requires explicit `--model` and a non-empty held-rung SFT export |
 
-Iterate at 1.7B. Move to 4B only once the 1.7B translator holds a contract-validity rate
-above ~95% on `aria bench`.
+A quantised GGUF is an inference artifact, not the input expected by the current
+QLoRA reference. Training updates an adapter/parameters only when run against a
+compatible base with the required dependencies and hardware. No SFT run or
+weight update is claimed by this manifest.
 
----
+## Inspect and verify before use
 
-## 5. The decision I need from you
+* For a GGUF file, `aria model inspect <file>` reads the local header and can
+  identify an LFS pointer instead of weights. This tool does not inspect an HF
+  checkpoint directory.
+* For a Hugging Face model directory, check the model configuration and
+  tokenizer, ensure every shard named in the index exists and has a plausible
+  size, and record the repository revision and license. Do not infer details
+  from a model name.
+* The current `training/sft_qlora.py` requires `--model` explicitly and accepts
+  only a non-empty JSONL dataset with `messages` records. For the default school
+  path, produce that dataset using `aria ledger sft`; it exports demonstrated
+  processes only from rungs already held by the staged school.
+* `aria ask --context-budget-chars N` bounds prompt context by character count
+  unless a tokenizer-based measure is supplied by an embedding application.
+  Model context-window limits are distinct and should be checked for the actual
+  serving model.
 
-Pick the **runtime tier** — 1.7B (safe, ~1.1 GB, comfortable on the tablet) or 4B (better
-translation, ~2.5 GB, tighter but still fine) — and whether you want to train on a rented
-GPU at all this round. Everything else on this page follows from those two answers.
+No model size, local device fit, GPU tier, or run time is asserted here for the
+specified Kimi path. Those measurements require the actual fetched files and a
+working runtime. See [`LLM_INTEGRATION.md`](LLM_INTEGRATION.md),
+[`WEIGHT_REWRITING.md`](WEIGHT_REWRITING.md), and [`../training/README.md`](../training/README.md)
+for the current channel and training status.

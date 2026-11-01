@@ -1,22 +1,17 @@
-"""GRPO with the ARIA verifier -- binary first, shaped only if you must.
+"""Legacy scalar-reward GRPO experiment; opt-in only.
 
-Two signals are available:
+This script is not ARIA's accepted training curriculum. The accepted route is
+ledger-recorded verification, staged school advancement, then SFT from held
+rungs (``aria ledger sft``). GRPO is retained only for explicit experiments
+because even a binary verifier signal is a scalar objective, and the shaped
+version is known to reward a broken process.
 
-``--signal pass`` (default)
-    ``1.0`` when the completion is a *demonstrated* process -- the contract
-    parsed, every step the engine took was verified, and the run reached a
-    decision -- otherwise ``0.0``. This is the ledger's rule
-    (``aria/llm/ledger.py``) and it is the one to use: there is no partial
-    credit, so there is nothing to farm.
-
-``--signal shaped``
-    The 0.0-1.0 scale in ``aria/llm/dataset.py::score_completion``. It is kept
-    for continuity, and it carries a known defect: a wrong rational solve
-    (``9/x - 3 = 24``) earns 0.90 because two of its three steps verified. The
-    ledger refuses it. Prefer ``pass``.
+To run the experiment intentionally, pass
+``--experimental-allow-scalar-reward``. The default is to refuse training.
 
     python training/grpo_verifier.py --model out/qwen3-1.7b-aria-sft \
-        --data data/rl.jsonl --out out/qwen3-1.7b-aria-grpo --signal pass
+        --data data/rl.jsonl --out out/qwen3-1.7b-aria-grpo \
+        --signal pass --experimental-allow-scalar-reward
 """
 
 from __future__ import annotations
@@ -33,7 +28,9 @@ from typing import List
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="GRPO with a verified-mathematics reward")
+    parser = argparse.ArgumentParser(
+        description="Legacy scalar-reward GRPO experiment (training requires explicit opt-in)"
+    )
     parser.add_argument("--model", default="out/aria-sft")
     parser.add_argument("--data", default="data/rl.jsonl")
     parser.add_argument("--out", default="out/aria-grpo")
@@ -45,14 +42,25 @@ def build_parser() -> argparse.ArgumentParser:
         "--signal",
         choices=("pass", "shaped"),
         default="pass",
-        help="pass = binary demonstrated/not (recommended); shaped = legacy 0..1 scale",
+        help="legacy GRPO comparison signal: binary pass/fail or the shaped diagnostic scale",
+    )
+    parser.add_argument(
+        "--experimental-allow-scalar-reward",
+        action="store_true",
+        help="explicitly opt in to this legacy scalar-objective experiment",
     )
     parser.add_argument("--dry-run", action="store_true")
     return parser
 
 
 def main() -> int:
-    args = build_parser().parse_args()
+    parser = build_parser()
+    args = parser.parse_args()
+    if not args.dry_run and not args.experimental_allow_scalar_reward:
+        parser.error(
+            "scalar-reward training is not ARIA's curriculum; use ledger-backed SFT, "
+            "or pass --experimental-allow-scalar-reward to run this legacy experiment"
+        )
 
     import json
 

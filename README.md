@@ -151,6 +151,7 @@ aria/
 │   └── engine.py      solve / simplify / factor / expand / differentiate / prove / modular
 ├── verify/        three-valued verification (SymPy + dependency-free backends)
 ├── science/       dimensions, units, physical laws, dimensional inversion
+├── llm/           actual-model channel, contract protocol, cross-scale context, memory, ledger
 ├── bench/         task suite, metrics, markdown/JSON reports
 └── cli.py         `aria` command-line interface
 ```
@@ -201,7 +202,7 @@ scale), and what a credible external evaluation would require.
 The neural component, measured separately:
 
 ```
-preference pairs mined from verified derivations : 111
+rule-ordering pairs mined from verified derivations (not human ratings) : 111
 held-out ranking accuracy                        : 73.9%
 ```
 
@@ -209,64 +210,73 @@ held-out ranking accuracy                        : 73.9%
 
 ## Local models: the math-only channel
 
-ARIA can sit behind a local LLM so that **mathematics is the only intermediate
-language**. The model is grammar-constrained to emit a three-line contract
-(`goal` / `var` / `expr`) and nothing else; ARIA parses it, proves every step, and
-the model then narrates the verified trace. The model never states a mathematical
-fact, so it cannot invent one.
+ARIA places an actual LLM at the natural-language input and output edges; the
+intermediate representation is a three-line mathematical contract and checked
+symbolic work. The input model translates a request, ARIA verifies each symbolic
+step, and a narrator is prompted to describe the checked frame. The model can
+still mistranslate the user's intent, and narration can still be wrong: the
+verifier checks the symbolic process, not whether the contract captured every
+nuance of the original request.
 
 ```bash
 aria grammar --mode loose --out aria-loose.gbnf      # the output alphabet
 llama-server -m qwen3-4b-instruct-q4_k_m.gguf --port 8080 --grammar-file aria-loose.gbnf
 aria ask "solve for x in 2x + 4 = 10" --endpoint http://127.0.0.1:8080/v1/chat/completions
-aria ask "solve for x in 2x + 4 = 10" --dry-run      # no model needed
+aria ask "solve for x in 2x + 4 = 10" --dry-run      # no model needed; parser stand-in only
 ```
 
-A 3–8B model is sufficient because the model only translates; the mathematics is
-done exactly. Full guide, including why a 2.8T model is the wrong target for a
-tablet and what can only be achieved by retraining:
+The Qwen command is a separate local integration example, not a measured claim
+that any model size is sufficient. ARIA's specified source is Hugging Face
+`meshllm/Kimi-K3-UD-Q4_K_XL-layers`, requested via
+`git clone https://huggingface.co/meshllm/Kimi-K3-UD-Q4_K_XL-layers`. Repository
+existence, contents, license, and runtime remain unverified; the name and clone
+command are not evidence that the repo exists. See
+[`docs/HF_MANIFEST.md`](docs/HF_MANIFEST.md) and
 [`docs/LLM_INTEGRATION.md`](docs/LLM_INTEGRATION.md).
 
 ---
 
 ## Rewriting the weights
 
-Everything above changes *behaviour* without touching a parameter. The next step
-up is to change the weights — and ARIA specifies exactly how, because the
-verifier is already a reward function:
-
-| completion | reward |
-|---|---|
-| invalid contract (didn't speak mathematics) | 0.00 |
-| parsed, rejected by the symbolic layer | 0.05 |
-| `partial` (some steps proven) | 0.30 + 0.40 × trace accuracy |
-| `refuted` (a decided counterexample) | 0.50 |
-| `solved`, every step proven | **1.00** |
-
-No labels, no human preference data. The rewrite rules become the reward and the
-reward becomes the gradient, so a weight update is steered toward provable
-mathematics.
+Changing model weights is required; a grammar or interface change alone is not
+weight rewriting. ARIA's accepted update path is **ledger → staged school
+advancement → SFT**, not scalar reward maximisation. A rung's demonstrated
+processes become SFT targets only after that rung is held by distinct verified
+work. QLoRA then updates an adapter/parameters on a compatible model, and a
+separate held-out evaluation checks whether the changed weights improved
+translation.
 
 ```bash
-aria dataset sft --out data/sft.jsonl      # 136 question → contract pairs
-aria dataset rl  --out data/rl.jsonl       # 46 prompts + reward id
-aria reward --completion "goal: solve
-var: x
-expr: 2x + 4 = 10"                        # -> 1.00 solved
-python training/sft_qlora.py --dry-run     # data check, no GPU needed
+aria ledger report
+aria ledger sft --out data/grade-04.jsonl --max-level 4
+python training/sft_qlora.py \
+  --model ./Kimi-K3-UD-Q4_K_XL-layers \
+  --data data/grade-04.jsonl \
+  --out out/aria-grade-04
 ```
 
-Reference QLoRA and GRPO scripts live in [`training/`](training/README.md); the
-reasoning — what a weight is, why model editing cannot install a procedure, and
-which hardware tier you actually need — is in
-[`docs/WEIGHT_REWRITING.md`](docs/WEIGHT_REWRITING.md).
+The model path above is the local directory one might obtain from the specified
+Hugging Face clone; it is **not verified** here, and a clone is not proof that
+weights were fetched or that the files are trainable. The current training script
+requires an explicit model path and a non-empty `messages` dataset. A separate
+small Qwen reference is in [`training/README.md`](training/README.md).
+
+`aria reward` and `aria dataset rl` remain available as legacy diagnostics; they
+do not advance the school or define ARIA's accepted training objective. The old
+shaped diagnostic's 0.90 score for a broken process is retained as a regression
+example in [`docs/LEDGER.md`](docs/LEDGER.md). For the research status and the
+specified model-source caveat, see [`docs/WEIGHT_REWRITING.md`](docs/WEIGHT_REWRITING.md).
 
 ---
 
 ## The ledger: a record instead of a reward
 
-A reward is a number somebody hands you; it can be maximised without being understood.
-ARIA keeps a file instead — one line per attempt, written by the system, for the system:
+A scalar training reward can be maximised without being understood, but ordinary human
+recognition is not a scalar objective: someone may spontaneously say what they liked,
+what they want changed, or ask for a review. ARIA may preserve a clearly stated preference
+as inspectable text; it must not treat praise as mathematical proof, require praise to
+advance, or treat silence as dislike or failure. The ledger keeps symbolic process evidence
+separate — one line per attempt, written by the system, for the system:
 
 ```json
 {"seq": 7, "question": "solve 9x - 3 = 24", "skill": "linear_equation",
@@ -284,16 +294,18 @@ problems**.
 
 Advancement is a school, not a staircase: twelve rungs (arithmetic → simplify → expand →
 linear → factor → quadratic → derivatives → log/exp → trig → identities → congruences),
-each held by three distinct proven problems, then college. A failure never costs a grade —
-it opens a *repair*, and advancement waits until the repair is clean. A rung the engine
-cannot decide is marked **dark**, not failed.
+each held by three distinct proven problems, then college. A failed process opens a
+*repair* without erasing a held grade; the repair is a learning opportunity, not a penalty.
+Missing praise or other human feedback never changes the grade. A rung the engine cannot
+decide is marked **dark**, not failed. A person may choose a private, local self-reward
+without asking the system or another person; no reward needs to be earned by approval.
 
 ```bash
 aria ledger next                        # the problem to attempt, plus its contract
 aria ledger record --question "solve 9x - 3 = 24" \
                    --completion "goal: solve\nvar: x\nexpr: 9x - 3 = 24"
 aria ledger report                      # the grade card
-aria ledger sft --out data/ledger.jsonl # only the processes that were proven
+aria ledger sft --out data/ledger.jsonl # proven processes from held school rungs only
 ```
 
 The motivating measurement: the shaped reward pays **0.90** for `9/x - 3 = 24`, whose final
@@ -311,8 +323,11 @@ second kind: an append-only file of short text entries, searchable on purpose.
 ```bash
 aria memory add "the Schwarzschild singularity at r = 0 is spacelike" \
     --tags penrose,singularity --source aria/geometry/causal.py --confidence verified
+aria memory add "I liked the cheesecake; offer a variation again" \
+    --kind preference --source user-stated --confidence stated
 aria memory find "where is the horizon"          # ranked, explainable
-aria memory context "penrose singularity"        # a block to put in front of a model
+aria memory correct 1 "corrected statement" --source "geometry check"
+aria memory context "penrose singularity" --max-chars 1200 # explicit, recoverable omissions
 aria memory audit                                # entries with nothing holding them up
 aria memory import --from ledger                 # proven work becomes a procedure
 ```
@@ -379,11 +394,13 @@ What is modestly distinctive here is not capability but discipline:
   benchmark's headline number is the *invalid derivation rate*;
 - **a hard boundary the neural component cannot cross** — it ranks rule outputs,
   it cannot emit expressions;
-- **dependency-free reproducibility** — ~6,300 lines, stdlib only, deterministic.
+- **reproducible core** — no mandatory runtime dependencies, deterministic checks, and a full test suite.
 
 ARIA is far weaker than the state of the art in capability: no Lean/Coq backend,
-no proof search, no pretrained model, no IMO-scale results, and a 46-task
-self-authored benchmark. Full lineage and the blunt comparison:
+no general theorem search, no model weights bundled with this repository, no
+IMO-scale results, and a 46-task self-authored benchmark. The LLM channel is a
+real model integration, but its specified Hugging Face source is unverified here
+and no fine-tuning run is claimed. Full lineage and the blunt comparison:
 [`docs/PRIOR_ART.md`](docs/PRIOR_ART.md).
 
 ---
@@ -401,13 +418,16 @@ self-authored benchmark. Full lineage and the blunt comparison:
 - Dimensional analysis, nine physical laws, dimensional inversion
 - Structural embeddings and a trained step-ranking policy with policy-guided search
 - Benchmark harness with five reported metrics
-- CLI, 254 tests, CI workflow
+- Actual LLM input/output integration through `MathChannel`, with grammar-constrained contract requests and checked-frame narration; a local model server is required at runtime
+- Ledger-backed school state, held-rung SFT export, inspectable/correctable memory, and recoverable context-budget handling
+- CLI, tests, CI workflow
 
 **Partial / deliberately bounded**
 
 - The parser handles mathematical *notation* plus a small instruction grammar — not general natural language. Ambiguous juxtaposition (`2ab`) is resolved by an explicit documented rule, not by a language model.
 - Proof goals return a verified verdict on an identity; multi-premise derivations are parsed and type-checked but not discharged (no Lean/Coq bridge yet).
-- The neural core is a compact logistic ranker over structural features, not a transformer over tree positions.
+- The in-repo neural reasoning core is a compact logistic ranker over structural features, not a transformer over tree positions.
+- The actual LLM translator/narrator uses a separately supplied model; the specified Kimi layers source has not been fetched or verified, and no parameter/adapter update has yet been run here.
 
 **Not implemented** (tracked in [`docs/ROADMAP.md`](docs/ROADMAP.md))
 
@@ -422,7 +442,7 @@ self-authored benchmark. Full lineage and the blunt comparison:
 ## Development
 
 ```bash
-pytest                                  # 254 tests
+pytest                                  # 282 tests at this revision
 aria bench                              # full suite + markdown report
 aria bench --suite solve --markdown benchmarks/report.md
 aria train --epochs 80 --eval           # retrain the step policy

@@ -1,20 +1,23 @@
 # ARIA — Context Pack
 
 > Single-file digest of the ARIA codebase, for loading into an offline LLM.
-> Everything here is accurate as of v0.1.0. Full detail lives in `README.md`,
-> `docs/ARCHITECTURE.md`, `docs/DESIGN_SPEC.md`, `docs/EVALUATION.md`.
-> Approx. 25 KB / ~7k tokens.
+> This is a maintained summary, not a substitute for source or tests; implementation
+> status was reviewed on 2026-10-31. Full detail lives in `README.md`,
+> `docs/ARCHITECTURE.md`, `docs/DESIGN_SPEC.md`, `docs/EVALUATION.md`, and
+> `docs/LLM_INTEGRATION.md`.
 
 ---
 
 ## 1. What ARIA is
 
 ARIA (Algebraic Reasoning & Inference Architecture) is a neuro-symbolic reasoning
-system in which **symbolic objects, not text tokens, are the substrate**.
-Mathematics is represented as typed expression trees, transformed by explicit
-justified rewrite rules, and **every transformation is verified** by a symbolic
-engine before it is accepted. A small learned policy ranks which rewrite to try
-next; it can never emit an answer or bypass verification.
+system in which **symbolic objects, not text tokens, are the substrate**. The
+working integration places a separately supplied actual LLM at the natural-language
+input/output edges; the symbolic engine remains the middle. Mathematics is represented
+as typed expression trees, transformed by explicit justified rewrite rules, and every
+transformation is checked before the process is counted as demonstrated. A small
+learned policy ranks symbolic rewrites; it is distinct from the edge LLM and cannot
+bypass the symbolic verification boundary.
 
 Core claim: an answer is worthless without a machine-checkable derivation.
 Core discipline: verification is **three-valued** — `proven`, `refuted`,
@@ -42,12 +45,14 @@ aria/
 ├── verify/        verifier.py (3-valued), sympy_backend.py
 ├── science/       units.py (dimension algebra), laws.py (law library, inversion)
 ├── bench/         tasks.py (46 tasks), runner.py (metrics, markdown/JSON)
+├── llm/           actual-LLM channel, context frames, ledger, inspectable memory
 └── cli.py         `aria` command line
-tests/             113 tests
-docs/              ARCHITECTURE, DESIGN_SPEC, EVALUATION, RISKS, ROADMAP
+training/          QLoRA SFT reference + opt-in legacy scalar GRPO experiment
+tests/             282 tests at this revision
+docs/              ARCHITECTURE, DESIGN_SPEC, EVALUATION, RISKS, ROADMAP, LLM_INTEGRATION
 ```
 
-Size: ~6,300 lines of Python.
+Source line counts are intentionally omitted; they drift and do not indicate capability.
 
 ### Data flow
 
@@ -60,6 +65,14 @@ input text → parse → SymbolicState(expressions, Goal) → engine dispatch
 `Derivation.valid` is true only when **every** step got a `proven` verdict.
 Statuses: `solved`, `partial`, `open`, `refuted`. `partial` is a first-class
 outcome and always carries a reason string.
+
+The actual-LLM channel sends natural language to a translator, requires a structured
+contract, invokes the symbolic engine, then gives the resulting verified/held frame
+to a narrator. `--dry-run` is only a parser stand-in. The requested model source is
+Hugging Face `meshllm/Kimi-K3-UD-Q4_K_XL-layers`, with retrieval command
+`git clone https://huggingface.co/meshllm/Kimi-K3-UD-Q4_K_XL-layers`; repository
+existence, weights, license, runtime compatibility, and any weight update remain
+unverified. A Qwen model in examples is a separate smoke-test reference, not a substitute.
 
 ---
 
@@ -260,17 +273,27 @@ verifier, so all are equally sound.
 
 ---
 
-## 7b. Local-model math channel
+## 7b. LLM math channel and recoverable context
 
-The model is only allowed to emit a three-line contract (`goal:` / `var:` /
-`expr:`); ARIA parses, solves and verifies; the model then narrates the verified
-trace. A GBNF grammar makes malformed output unrepresentable during decoding
-(`aria grammar --mode loose|strict`). The contract is validated again in Python,
-and a repair loop feeds the parse error back. `aria ask "..." --dry-run` exercises
-the whole loop with ARIA's own parser in place of the model, so tests never need
-weights. Entry points: `MathChannel(client).ask(text)`, `parse_contract`,
-`to_state`, `build_grammar`, `OpenAICompatClient` (stdlib HTTP, works with
-llama.cpp / LM Studio / Ollama).
+A supplied actual LLM sits at the natural-language edges. The translator is asked
+for a structured contract (`goal:` / optional `var:` / `expr:`); the protocol
+rejects extra text, unknown/duplicate/misordered fields, and invalid expressions.
+GBNF constrains decoding only when the selected endpoint honors it. ARIA then runs
+the symbolic engine and produces a task outcome plus a separate process-audit
+frame (pass, fail, or held); the narrator receives that frame, but prose is not a
+new proof and may still be wrong. The verifier checks the symbolic task it was
+given, not whether the translation captured the user's intent.
+
+Context packing sends the measured pack, not the unbounded original prompt. It
+omits only whole optional blocks, retains source text in a JSON manifest for
+rebuilding, and holds before inference if required context cannot fit. The
+memory store is inspectable/correctable; `kind=preference` keeps a user-stated
+like/dislike subjective, and no feedback is not a negative signal. Memory is not
+automatically captured or injected into `aria ask`. `--dry-run` replaces the
+model with ARIA's parser for tests; it is not evidence of an LLM run or weight
+update. Entry points: `MathChannel(client).ask(text)`, `parse_contract`,
+`ContextBuilder`, `ReasoningFrame`, `MemoryStore`, `build_grammar`, and
+`OpenAICompatClient` (stdlib HTTP; local or remote endpoint).
 
 ---
 
@@ -352,8 +375,8 @@ Caveat that must always accompany these numbers: the suite was written alongside
 the engine, so 100% means "no regressions, no unsound steps", **not** "solves
 arbitrary mathematics".
 
-Neural component, measured separately: 111 mined preference pairs, 73.9%
-held-out ranking accuracy.
+Neural component, measured separately: 111 verifier-mined pairwise rule-ordering
+labels (not human preference ratings), 73.9% held-out ranking accuracy.
 
 **Negative result (kept on purpose):** on the simplify subset, the learned policy
 is *less* efficient than the fixed rule order — 2.71 vs 1.86 mean expansions
@@ -366,7 +389,8 @@ Scaling the corpus/model is roadmap work, not a claim being made.
 ## 11. Known limitations
 
 - Parser covers mathematical *notation* plus a small instruction grammar — not
-  general natural language. An LLM front-end is the intended complement.
+  general natural language. An actual LLM front-end is available at the edges;
+  user-intent fidelity and external baseline performance are not established.
 - `partial` outcomes for degree ≥ 3 with irrational/complex roots.
 - Proof goals verify identities; multi-premise derivations are parsed but not
   discharged (no Lean/Coq bridge yet).

@@ -142,15 +142,17 @@ def test_repeating_one_problem_does_not_hold_a_rung(tmp_path) -> None:
     assert record.state == "learning"
 
 
-#: A run that ends "solved" while one of its steps failed to verify. The engine
-#: emits it for a rational equation it does not actually know how to solve.
+#: A run that ends "solved" while one of its steps failed to verify. The reported
+#: solution happens to be right, but the engine's final transformation is unchecked.
 BROKEN_PROCESS = "goal: solve\nvar: x\nexpr: 9/x - 3 = 24"
 
 
 def test_a_failure_does_not_remove_the_grade_but_opens_a_repair(tmp_path) -> None:
     book = L.Ledger(tmp_path / "ledger.jsonl")
-    for prompt in ("solve 9x - 3 = 24", "solve 2x + 7 = 15", "solve 6x + 1 = 19"):
-        _work(book, prompt)
+    for _level, _skill, _label, seeds in L.CURRICULUM[:4]:
+        for prompt in seeds[:3]:
+            _work(book, prompt)
+    assert book.grade() == 5
     assert book.skills()["linear_equation"].state == "held"
 
     entry = book.record("solve 9/x - 3 = 24", BROKEN_PROCESS)
@@ -158,7 +160,13 @@ def test_a_failure_does_not_remove_the_grade_but_opens_a_repair(tmp_path) -> Non
     assert entry.demonstrated is False  # an unverified step is not a proof
     record = book.skills()["linear_equation"]
     assert record.state == "repair"
+    assert record.held_once is True
     assert record.demonstrated == 3  # the grade itself is not taken away
+    assert book.grade() == 5
+    card = book.card()
+    assert "linear_equation" in card["held"]
+    assert "linear_equation" in card["open_repairs"]
+    assert any(row["skill"] == "linear_equation" for row in book.to_sft_records())
 
 
 def test_repair_comes_before_new_material(tmp_path) -> None:
@@ -170,15 +178,15 @@ def test_repair_comes_before_new_material(tmp_path) -> None:
     assert "linear_equation" in book.card()["open_repairs"]
 
 
-def test_repair_closes_after_two_clean_attempts(tmp_path) -> None:
+def test_repair_closes_after_two_clean_distinct_attempts(tmp_path) -> None:
     book = L.Ledger(tmp_path / "ledger.jsonl")
     for prompt in ("solve 9x - 3 = 24", "solve 2x + 7 = 15", "solve 6x + 1 = 19"):
         _work(book, prompt)
     book.record("solve 9/x - 3 = 24", BROKEN_PROCESS)
     assert book.skills()["linear_equation"].state == "repair"
     _work(book, "solve 5x - 2 = 8")
+    assert book.skills()["linear_equation"].state == "repair"
     _work(book, "solve 4x + 3 = 19")
-    _work(book, "solve 3x - 1 = 8")
     assert book.skills()["linear_equation"].state == "held"
 
 
@@ -248,48 +256,52 @@ def test_sft_exports_only_proven_processes(tmp_path) -> None:
     book = L.Ledger(tmp_path / "ledger.jsonl")
     _work(book, "solve 9x - 3 = 24")
     book.record("solve x^3 - x - 1 = 0", "goal: solve\nvar: x\nexpr: x^3 - x - 1 = 0")
-    records = book.to_sft_records()
+    records = book.to_sft_records(held_only=False)
     assert len(records) == 1
     assert records[0]["messages"][0]["role"] == "system"
     assert "9 x" in records[0]["messages"][-1]["content"]
 
 
-def test_a_failure_is_learned_only_after_it_is_corrected(tmp_path) -> None:
-    path = tmp_path / "ledger.jsonl"
-    book = L.Ledger(path)
-    book.record("solve 9/x - 3 = 24", BROKEN_PROCESS)
+def test_sft_default_advances_only_with_held_school_rungs(tmp_path) -> None:
+    book = L.Ledger(tmp_path / "ledger.jsonl")
+    prompts = ("solve 9x - 3 = 24", "solve 2x + 7 = 15", "solve 6x + 1 = 19")
+    for prompt in prompts[:2]:
+        _work(book, prompt)
     assert book.to_sft_records() == []
 
-    # a later, proven attempt on the same expression supersedes the error
-    with path.open("a") as handle:
-        handle.write(
-            json.dumps(
-                {
-                    "seq": 99,
-                    "when": "2026-10-31T00:00:00+00:00",
-                    "question": "solve 9/x - 3 = 24",
-                    "skill": "linear_equation",
-                    "contract": "goal: solve\nvar: x\nexpr: 9/x - 3 = 24",
-                    "outcome": "solved",
-                    "verified": True,
-                    "demonstrated": True,
-                    "steps": [],
-                    "first_error": "",
-                    "note": "",
-                }
-            )
-            + "\n"
-        )
+    _work(book, prompts[2])
+    staged = book.to_sft_records()
+    assert len(staged) == 3
+    assert {record["skill"] for record in staged} == {"linear_equation"}
+    assert book.to_sft_records(max_level=1) == []
+    assert len(book.to_sft_records(max_level=4)) == 3
+
+    _work(book, "simplify 3x + 4x - 2x")
+    assert len(book.to_sft_records()) == 3
+    assert len(book.to_sft_records(held_only=False)) == 4
+
+
+def test_a_broken_process_is_never_exported_even_after_the_rung_is_held(tmp_path) -> None:
+    book = L.Ledger(tmp_path / "ledger.jsonl")
+    book.record("solve 9/x - 3 = 24", BROKEN_PROCESS)
+    assert book.to_sft_records(held_only=False) == []
+
+    prompts = ("solve 9x - 3 = 24", "solve 2x + 7 = 15", "solve 6x + 1 = 19")
+    for prompt in prompts:
+        _work(book, prompt)
+
     records = book.to_sft_records()
-    assert len(records) == 1
-    assert records[0]["messages"][-1]["content"] == "goal: solve\nvar: x\nexpr: 9/x - 3 = 24"
+    assert len(records) == 3
+    assert all("9/x" not in record["messages"][-1]["content"] for record in records)
+    assert {record["skill"] for record in records} == {"linear_equation"}
 
 
 def test_the_scalar_reward_can_pay_for_a_process_that_fails() -> None:
-    """The reason the ledger exists, in one assertion.
+    """A shaped scalar can pay for an unchecked process with a correct endpoint.
 
-    A wrong rational solve earns 0.90 from the shaped reward because two of its
-    three steps verified. The ledger refuses it, because one step did not.
+    The engine reports x = 1/3, which satisfies this equation, but one produced
+    step has an invalid justification. Two other steps pass, yielding 0.90;
+    the ledger correctly refuses to count the process as demonstrated.
     """
     from aria.llm.dataset import score_completion
 

@@ -167,9 +167,10 @@ technique. It is not novel; what is comparatively unusual is running it in the
 3. **A verification boundary the neural component cannot cross.** The policy
    ranks rule outputs; it cannot emit expressions. Enforced by API shape, not by
    convention.
-4. **Dependency-free reproducibility.** ~6,300 lines, stdlib only, 113 tests,
-   deterministic benchmark. Useful as a teaching and auditing artifact — not as
-   a competitive solver.
+4. **Reproducibility.** The core has no mandatory runtime dependency, the
+   benchmark is deterministic for a fixed configuration, and the current suite
+   has 282 tests. Useful as a teaching and auditing artifact — not as a
+   competitive solver.
 
 None of these is a research result. Items 1–3 are design choices already present
 in pieces elsewhere; item 4 is engineering.
@@ -178,12 +179,13 @@ in pieces elsewhere; item 4 is engineering.
 
 ## 9. What ARIA is not, compared with prior art
 
-* **Not a competitor to AlphaProof or DeepSeek-Prover.** No Lean/Coq backend, no
-  proof search, no pretrained model, no autoformalisation.
-* **Not a theorem prover.** It verifies identities and solves equations; it does
-  not discharge multi-premise proofs.
-* **Not evidence against LLMs.** It is a backend that an LLM front-end could
-  call, in the same spirit as program-aided and tool-augmented approaches.
+* **Not a competitor to AlphaProof or DeepSeek-Prover.** No Lean/Coq backend,
+  no general proof search, and no model weights bundled with this repository.
+* **Not a general theorem prover.** It verifies identities and solves equations;
+  it does not discharge multi-premise proofs.
+* **Not evidence against LLMs.** The `MathChannel` places an actual supplied LLM
+  at the natural-language edges and ARIA in the symbolic middle; it is a bounded
+  neuro-symbolic integration, not a general LLM replacement.
 * **Not benchmarked against any external baseline**, which is why its own
   numbers are labelled as a regression harness rather than a capability claim.
 

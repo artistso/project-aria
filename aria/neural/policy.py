@@ -6,10 +6,11 @@ using structural features, and the search loop uses those scores to order what
 to try next.  Answers always come from the rule engine and are always verified,
 so a miscalibrated policy costs search time, never correctness.
 
-The model is a logistic ranker trained by SGD on preference pairs mined from the
-engine's own verified derivations.  It is intentionally dependency-free: the
-same code runs with or without a deep-learning stack, and the learned weights
-are a small JSON file you can inspect.
+The model is a logistic ranker trained by SGD on pairwise rule-ordering labels
+mined from the engine's own verifier-checked derivations. These are generated
+from symbolic search outcomes, not human preference ratings. It is intentionally
+dependency-free: the same code runs with or without a deep-learning stack, and
+the learned weights are a small JSON file you can inspect.
 """
 
 from __future__ import annotations

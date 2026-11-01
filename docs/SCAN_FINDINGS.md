@@ -6,8 +6,11 @@ material that bears on Project ARIA. Follows the convention of the `00 — START
 looked at, what it is worth, and what it is not.
 
 **Scope actually covered.** 100 repositories listed on GitHub, READMEs of 12 read and file
-trees inspected. 100 most recent Drive files listed, 5 read in full, 3 name searches run.
-60 Google Docs listed by title and date, none read in full. This is a survey, not an
+trees inspected. 100 recent Drive files listed; the initial pass read five in full, followed
+by a supplemental pass that fully extracted two small Drive text files and partially read
+one 317,807-byte text file (the 50,000-character extraction was explicitly truncated).
+60 native Google Docs were listed by title/date; a later long-document extraction returned
+a tool-truncated response, so it is not counted as a full read. This is a survey, not an
 exhaustive audit; anything marked *unread* below should be treated as a lead, not a fact.
 
 ---
@@ -61,8 +64,9 @@ contradiction goes up.
 
 That is the same failure mode as the ledger's motivating example, one level up: a formula
 that looks like it measures the right thing, is easy to compute, and rewards the opposite
-of what it claims. ARIA's shaped reward (`9/x - 3 = 24` earning 0.90 for a wrong answer) is
-the small version of it. Both were caught the same way — by differentiating / auditing the
+of what it claims. ARIA's shaped reward (`9/x - 3 = 24` earning 0.90 for an unchecked
+process whose reported value happens to be right) is the small version of it. Both were
+caught the same way — by differentiating / auditing the
 quantity instead of trusting it. Keep `docs/PRIOR_ART.md` honest about this being a pattern
 in the account's own work, not a mistake unique to language models.
 
@@ -130,3 +134,38 @@ degrade it. The one idea from that design that survived is the part that is chec
 3. Adopt the four-row status table as the standard shape for any ARIA claim document.
 4. Retire the Resonance Engine's composite loss in favour of the ledger, in writing, so the
    decision is on record rather than silently dropped.
+
+## 9. Supplemental Drive review (2026-10-31)
+
+This pass read the small text files below directly through Drive extraction; these notes
+are based on extracted document contents, not search snippets. It does not turn the wider
+Drive/Docs collection into an exhaustive review.
+
+* **`ethics.md` — full 2,190-byte extraction.** The file states proposed principles named
+  `EGAL-1`, `SAFE-1`, `SYNAP-1`, `GEOM-1`, and `AUDIT-1`, including a probability equality
+  and human dignity/right language. It supplies no derivation, operational semantics, or
+  implementation evidence for the equations and named constraints. It is a design statement,
+  not evidence of a mathematical conservation law, clinical fact, or legal determination.
+  The extracted text refers to human rights; it does not itself establish a right or freedom
+  held by AI.
+* **`the mutant Constitution … .txt` — partial.** The stored text is 317,807 bytes; the
+  available extraction was capped at 50,000 characters and explicitly truncated. The visible
+  beginning contains an identifiable user prompt followed by assistant-generated commentary
+  and a formalization into predicates/axioms, plus theorem-like claims. That generated
+  continuation is not attributable to the user and is not a verified proof or constitutional
+  authority. Because the rest was not read, this note makes no claim about its full contents.
+* **`ARIA — the ledger.md` — full 9,260-byte extraction.** This Drive copy contains a
+  specific mathematical misstatement: it calls `x = 1/3` the wrong answer to
+  `9/x - 3 = 24`, even though substitution gives `9/(1/3) - 3 = 24`. The separate process
+  concern remains real: an endpoint can be right while a derivation step is unverified, so
+  that attempt should not be credited as a demonstrated proof. The repository's current
+  explanation keeps those two verdicts separate; treat this Drive copy's answer-level claim
+  as stale/incorrect, not as the project's present result.
+* A long native Google Docs export returned a tool-truncated response and is not counted as a
+  full read. It is excluded from claims about source authorship or content here.
+
+**Review rule:** preserve provenance at sentence level when a source interleaves prompts and
+model continuations. Treat first-person material in a generated synthesis as a quotation or
+claim needing source confirmation, not as user-authored evidence. Search matches—including
+matches for “AI rights”—are discovery leads only; read the underlying document before making
+rights, authorship, or implementation claims.

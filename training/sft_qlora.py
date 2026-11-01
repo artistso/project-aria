@@ -1,10 +1,12 @@
 """QLoRA supervised fine-tune of a translator for ARIA's contract.
 
 Reference implementation. Requires transformers / peft / trl / bitsandbytes and a
-CUDA GPU; it is syntax-checked in CI but never executed there.
+CUDA GPU; it is syntax-checked in CI but never executed there. The model must be
+selected explicitly; the Qwen command below is a separate smoke-test base, not a
+substitute for the specified Kimi source.
 
     python training/sft_qlora.py --model Qwen/Qwen3-1.7B \
-        --data data/sft.jsonl --out out/qwen3-1.7b-aria-sft
+        --data data/grade-04.jsonl --out out/qwen3-1.7b-aria-grade-04
 """
 
 from __future__ import annotations
@@ -21,7 +23,11 @@ import argparse
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="QLoRA fine-tune for the ARIA contract")
-    parser.add_argument("--model", default="Qwen/Qwen3-1.7B")
+    parser.add_argument(
+        "--model",
+        required=True,
+        help="explicit local model directory or Hub ID; no unverified base is selected by default",
+    )
     parser.add_argument("--data", default="data/sft.jsonl")
     parser.add_argument("--out", default="out/aria-sft")
     parser.add_argument("--epochs", type=float, default=3.0)
@@ -43,6 +49,14 @@ def main() -> int:
         from collections import Counter
 
         rows = [json.loads(line) for line in open(args.data, encoding="utf-8") if line.strip()]
+        if not rows:
+            raise ValueError("refusing an empty SFT dataset; hold a school rung before export")
+        for index, row in enumerate(rows, start=1):
+            messages = row.get("messages")
+            if not isinstance(messages, list) or not messages:
+                raise ValueError(f"SFT row {index} needs a non-empty `messages` list")
+            if any(not isinstance(message, dict) or "role" not in message or "content" not in message for message in messages):
+                raise ValueError(f"SFT row {index} messages need `role` and `content` fields")
         roles = Counter(
             tuple(message["role"] for message in row["messages"]) for row in rows
         )
@@ -58,6 +72,13 @@ def main() -> int:
     from trl import SFTConfig, SFTTrainer
 
     dataset = load_dataset("json", data_files=args.data, split="train")
+    if not len(dataset):
+        raise ValueError("refusing an empty SFT dataset; hold a school rung before export")
+    if "messages" not in dataset.column_names:
+        raise ValueError("SFT data must contain a `messages` column (use `aria ledger sft`)")
+    extra_columns = [column for column in dataset.column_names if column != "messages"]
+    if extra_columns:
+        dataset = dataset.remove_columns(extra_columns)
     print(f"training examples: {len(dataset)}")
 
     tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)

@@ -1,24 +1,28 @@
-"""The math channel: text in, verified mathematics, text out.
+"""The math channel: natural language at the edges, symbolic work in the middle.
 
-    user text ──▶ model (grammar-constrained) ──▶ contract ──▶ ARIA parser
-              ──▶ rule engine + verifier ──▶ verified trace ──▶ model ──▶ prose
-
-The model appears twice, and in neither place is it allowed to state a
-mathematical fact.  On the way in it is a translator; on the way out it is a
-narrator that may only describe a trace the verifier already approved.  All
-mathematics happens in between, in exact symbolic form.
+The translator proposes a structured contract. The symbolic runtime checks the
+mathematics and keeps the task outcome separate from the process audit. A
+narrator may describe that frame, but its prose is not a new verification step.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import List, Optional, Sequence
+from typing import Callable, List, Optional, Sequence
 
 from ..core.parse import ParseError, parse_problem
 from ..core.state import Goal, GoalKind, SymbolicState
 from ..reason.derivation import Derivation
 from ..reason.engine import SymbolicEngine
 from .client import ChatClient, ClientError, Message, StubClient
+from .context import (
+    ContextBlock,
+    ContextBudgetError,
+    ContextBuilder,
+    ContextUse,
+    ReasoningFrame,
+    Scale,
+)
 from .grammar import build_grammar
 from .protocol import (
     DETERMINISTIC_TRANSLATION,
@@ -67,8 +71,11 @@ def dry_run_client() -> StubClient:
 
     def respond(messages: Sequence[Message]) -> str:
         user = messages[-1].content
-        if "VERIFIED TRACE" in user:
+        if "ARIA FRAME" in user:
             return ""  # narration is skipped in dry-run mode
+        marker = "--- USER ---\n"
+        if user.startswith("ARIA CROSS-SCALE CONTEXT") and marker in user:
+            user = user.split(marker, 1)[1].split("\n\n--- ", 1)[0]
         return deterministic_translator(user)
 
     return StubClient(respond)
@@ -84,29 +91,75 @@ class ChannelResult:
     user_text: str
     request: Optional[MathRequest] = None
     derivation: Optional[Derivation] = None
+    frame: Optional[ReasoningFrame] = None
     explanation: str = ""
     contract_text: str = ""
     repairs: int = 0
     error: Optional[str] = None
     trace: List[str] = field(default_factory=list)
+    context_uses: List[ContextUse] = field(default_factory=list)
+    context_failures: List[ContextBudgetError] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
         return self.error is None and self.derivation is not None
 
+    def as_dict(self) -> dict:
+        """A machine-readable result with the full context manifest."""
+        return {
+            "user_text": self.user_text,
+            "contract": self.contract_text,
+            "status": self.derivation.status if self.derivation else None,
+            "solutions": [str(value) for value in self.derivation.solutions]
+            if self.derivation
+            else [],
+            "explanation": self.explanation,
+            "repairs": self.repairs,
+            "error": self.error,
+            "reasoning_frame": self.frame.as_dict() if self.frame else None,
+            "contexts": [use.as_dict() for use in self.context_uses],
+            "context_failures": [failure.as_dict() for failure in self.context_failures],
+            "trace": list(self.trace),
+        }
+
     def to_text(self) -> str:
         lines = [f"Problem: {self.user_text}", ""]
         if self.request is not None:
-            lines.append("Model-produced contract (the only text the model may emit):")
+            lines.append("Accepted translator contract (validated before symbolic execution):")
             lines.extend(f"  {line}" for line in self.contract_text.splitlines())
             lines.append("")
         if self.derivation is not None:
-            lines.append("Verified derivation:")
+            lines.append("Symbolic engine trace:")
             lines.append(self.derivation.to_text())
             lines.append("")
+        if self.frame is not None:
+            assert self.frame.audit_state is not None
+            lines.append(
+                "Cross-scale state: "
+                f"outcome={self.frame.task_outcome}; "
+                f"audit={self.frame.audit_state.value} ({self.frame.audit_state.ket_label}); "
+                f"open obligations={len(self.frame.open_obligations)}"
+            )
         if self.explanation:
-            lines.append("Explanation (narrating the verified trace only):")
+            lines.append("Explanation (narrating the ARIA frame):")
             lines.append(self.explanation)
+        if self.context_uses or self.context_failures:
+            lines.append("Context manifest:")
+            for use in self.context_uses:
+                summary = use.pack.summary()
+                omitted = summary["omitted_ids"]
+                line = (
+                    f"  {use.phase}: {summary['completeness']} "
+                    f"({summary['used_units']} {summary['unit']}"
+                )
+                if summary["budget_units"] is not None:
+                    line += f" / {summary['budget_units']} {summary['unit']}"
+                line += ")"
+                if omitted:
+                    line += f"; omitted whole blocks: {', '.join(omitted)} (recoverable)"
+                lines.append(line)
+            for failure in self.context_failures:
+                lines.append(f"  {failure}")
         if self.repairs:
             lines.append(f"\nContract repairs: {self.repairs}")
         if self.error:
@@ -120,7 +173,7 @@ class ChannelResult:
 
 
 class MathChannel:
-    """Couples a local language model to ARIA's verified symbolic runtime.
+    """Couples a supplied language model endpoint to ARIA's symbolic runtime.
 
     Parameters
     ----------
@@ -134,7 +187,14 @@ class MathChannel:
     max_repairs:
         How many times to re-prompt the model with its own contract error.
     narrate:
-        Whether to ask the model for a prose explanation of the verified trace.
+        Whether to ask the model for prose about the ARIA frame; narration does not
+        change the symbolic audit state.
+    context_budget:
+        Optional input-context limit measured by ``context_measure``. The
+        default measure is character count; inject the model's tokenizer for a
+        token limit. Required context is never clipped.
+    context_measure:
+        Callable returning a non-negative integer size for a text string.
     """
 
     def __init__(
@@ -145,6 +205,9 @@ class MathChannel:
         max_repairs: int = 2,
         narrate: bool = True,
         max_tokens: int = 256,
+        context_budget: Optional[int] = None,
+        context_measure: Optional[Callable[[str], int]] = None,
+        context_unit: Optional[str] = None,
     ) -> None:
         self.client = client
         self.engine = engine or SymbolicEngine()
@@ -152,6 +215,13 @@ class MathChannel:
         self.max_repairs = max_repairs
         self.narrate = narrate
         self.max_tokens = max_tokens
+        measure = context_measure or len
+        unit = context_unit or ("chars" if context_measure is None else "units")
+        self.context_builder = ContextBuilder(
+            budget_units=context_budget,
+            measure=measure,
+            unit_label=unit,
+        )
 
     # -- main entry point --------------------------------------------------
 
@@ -162,15 +232,50 @@ class MathChannel:
         request: Optional[MathRequest] = None
 
         for attempt in range(self.max_repairs + 1):
+            system_messages = [message for message in messages if message.role == "system"]
+            conversation = [message for message in messages if message.role != "system"]
+            transcript = "\n\n".join(
+                f"--- {message.role.upper()} ---\n{message.content}" for message in conversation
+            )
+            reserved_system = "\n\n".join(message.content for message in system_messages)
+            block = ContextBlock(
+                id=f"translation-attempt-{attempt + 1}",
+                scale=Scale.MACRO,
+                text=transcript,
+                source="aria.llm.protocol",
+                required=True,
+                priority=1000,
+            )
+            try:
+                pack = self.context_builder.build(
+                    (block,),
+                    reserved_text=reserved_system,
+                    phase=f"translation attempt {attempt + 1}",
+                )
+            except ContextBudgetError as error:
+                result.context_failures.append(error)
+                result.error = f"translation held before model call: {error}"
+                return result
+            result.context_uses.append(ContextUse(pack.phase, pack))
+
+            # Send exactly the context that was measured, not the unbounded source
+            # messages that happened to be used to build it. Keep trusted system
+            # instructions in their actual role; the packed transcript is input data.
+            packed_messages = [*system_messages, Message("user", pack.text)]
             try:
                 raw = self.client.complete(
-                    messages, grammar=self.grammar, temperature=0.0, max_tokens=self.max_tokens
+                    packed_messages,
+                    grammar=self.grammar,
+                    temperature=0.0,
+                    max_tokens=self.max_tokens,
                 )
             except ClientError as error:
                 result.error = f"inference failed: {error}"
                 return result
 
-            result.trace.append(f"attempt {attempt + 1}: {raw.strip()[:160]}")
+            # Keep the entire exchange. If it must be shortened for display, the
+            # caller must request that explicitly; the stored trace is lossless.
+            result.trace.append(f"attempt {attempt + 1}: {raw.strip()}")
             try:
                 request = parse_contract(raw)
                 result.contract_text = request.as_text()
@@ -203,19 +308,42 @@ class MathChannel:
             return result
 
         result.derivation = derivation
+        result.frame = ReasoningFrame.from_derivation(derivation)
 
         if self.narrate:
-            result.explanation = self._narrate(user_text, derivation)
+            result.explanation = self._narrate(user_text, result.frame, result)
 
         return result
 
     # -- narration ---------------------------------------------------------
 
-    def _narrate(self, user_text: str, derivation: Derivation) -> str:
-        trace = derivation.to_text()
+    def _narrate(
+        self,
+        user_text: str,
+        frame: ReasoningFrame,
+        result: ChannelResult,
+    ) -> str:
+        template = narration_messages(user_text, "")
+        reserved = "\n\n".join(
+            f"--- {message.role.upper()} ---\n{message.content}" for message in template
+        )
+        try:
+            pack = self.context_builder.build(
+                frame.context_blocks(),
+                reserved_text=reserved,
+                phase="narration",
+            )
+        except ContextBudgetError as error:
+            result.context_failures.append(error)
+            return f"(narration held: {error}; the symbolic derivation is retained)"
+        result.context_uses.append(ContextUse(pack.phase, pack))
+
         try:
             text = self.client.complete(
-                narration_messages(user_text, trace), grammar=None, temperature=0.2, max_tokens=512
+                narration_messages(user_text, pack.text),
+                grammar=None,
+                temperature=0.2,
+                max_tokens=512,
             )
         except ClientError as error:
             return f"(narration unavailable: {error})"

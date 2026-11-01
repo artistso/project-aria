@@ -8,13 +8,16 @@ can be argued with. It sits beside the ledger. The **ledger** records what the s
 ```bash
 aria memory add "the Schwarzschild singularity at r = 0 is spacelike" \
     --tags penrose,singularity --source aria/geometry/causal.py --confidence verified
+aria memory add "I liked the cheesecake; offer a variation again" \
+    --kind preference --source "user-stated" --confidence stated
 aria memory find "where is the horizon"        # ranked, explainable
-aria memory context "penrose singularity"      # a block to put in front of a model
-aria memory audit                              # entries with nothing holding them up
-aria memory export --out memory.md             # the human-readable file
+aria memory correct 7 "corrected statement" --source "geometry check"
+aria memory context "penrose singularity" --max-chars 1200
+aria memory audit                              # active entries with nothing holding them up
+aria memory export --out memory.md             # active entries plus supersession history
 ```
 
-## 1. Three kinds of entry, and one rule
+## 1. Five kinds of entry, and one rule
 
 | kind | what it is | where it comes from |
 |---|---|---|
@@ -22,16 +25,30 @@ aria memory export --out memory.md             # the human-readable file
 | `procedure` | something that worked — *this contract solved this problem* | the ledger, automatically |
 | `correction` | something believed before that turned out wrong | a broken ledger attempt |
 | `source` | a pointer to material worth rereading | GitHub, Drive, Docs |
+| `preference` | a subjective, user-stated like, dislike, name, or requested variation | direct user statement; confidence remains `stated` unless separately tested |
 
 The rule: **every entry carries a source and a confidence**, and confidence is one of
 `unverified` → `stated` → `tested` → `verified`.
 
 An entry with no source is not deleted and not hidden; it is marked `unverified` and
-`aria memory audit` lists it. That is the whole defence against a text memory turning
-into confabulation: a guess is allowed to exist, but it is not allowed to *look* like
-knowledge. In the current test suite, the geometry import produces 36 verified entries
-and zero unverified ones, and adding one unsourced guess makes the audit name exactly
-that one.
+`aria memory audit` lists it. `aria memory correct <id> <text>` appends a sourced
+replacement with a `supersedes` link. When the original is a preference, the replacement
+retains `kind=preference` unless explicitly changed. The original remains in the file as
+history, while retrieval and audit use the active replacement. Corrections cannot target
+an already superseded record; correct the current replacement instead.
+
+Human appreciation and preference are real interaction signals, but they are not
+mathematical proof or a scalar training objective. A person may spontaneously say what
+they liked, disliked, or want changed; the system must not require praise as a protocol.
+When deliberately saved as a `preference`, the entry remains subjective and correctable.
+No feedback means no observation—not dislike, failure, or a penalty. A person may also
+choose a local self-reward without asking another person or asking the system; that act
+does not need to be logged or validated. This repository has no automatic preference
+capture or feedback solicitation, and `aria ask` does not inject memory automatically.
+
+That is a guard against a text memory turning into confabulation, not a proof that every
+source is true. The current test suite checks the memory mechanics and geometry routines;
+it does not establish the truth of every user-supplied or imported memory.
 
 ## 2. Looking into it
 
@@ -52,55 +69,56 @@ What ARIA remembers that bears on 'singularity spacelike' (2 of 36 entries):
   spacelike boundary: a moment in time, not a place in space
   [geometry, penrose, schwarzschild] (aria/geometry/causal.py)
 Use an entry only if it applies; each carries its source, and `unverified` means
-nobody has checked it.
+nobody has checked it. A `preference` is subjective user guidance, not a fact, consent,
+or verifier result. No feedback means no observation, not dislike or failure; do not
+infer a penalty.
 ```
 
 That last line is part of the block on purpose. The model is told that memory is
-evidence, not authority.
+evidence, not authority. `--max-chars` omits only whole entries and prints a reduction
+notice; JSON output contains the complete source-entry manifest. If even the mandatory
+header and notice do not fit, the CLI returns `HELD` with recoverable entries and asks for
+a larger budget. No entry is clipped or silently discarded.
 
 ## 3. The three uses
 
-**Retrieval → the model.** The block above goes in front of the translator prompt. This
-is the "look into it" behaviour: it is the difference between a model that has read
-something once during training and a system that can go and check what it knows.
+**Retrieval → prompt block.** `aria memory context` produces a sourced block for a caller
+to inspect and place into a prompt. The current `aria ask` / `MathChannel` does **not yet**
+automatically retrieve or inject that block, so memory-conditioned model behavior is not
+claimed as an integrated feature.
 
-**Work → memory.** `aria memory import --from ledger` turns every demonstrated attempt
-into a `procedure` (confidence `verified`, source `ledger#N`) and every broken attempt
-into a `correction` (confidence `tested`). Importing twice adds nothing, because
-identical text is de-duplicated. So the record of what the system did becomes the
-representation of what it knows, without a human writing summaries.
+**Work → memory.** `aria memory import --from ledger` turns each demonstrated attempt into
+a `procedure` (confidence `verified`, source `ledger#N`) and attempts with a recorded
+`first_error` into a `correction` (confidence `tested`). These imported correction records
+are history; explicit `memory correct` is the operation that supersedes a particular
+active entry. Identical entries are de-duplicated.
 
-**Memory → weights.** This is the "text-based understanding as a rewrite" part, and it
-is the part to be careful about. A memory becomes a training target only through the
-ledger, never directly:
-
-1. A memory retrieved for a task is put in the prompt.
-2. If the model then produces a contract that the engine *proves*, the ledger records
-   it, and `aria ledger sft` exports it — with the memory in the prompt and the proven
-   contract as the target.
-3. If it produces a contract that fails, the ledger records the break, and the memory
-   that misled it is a candidate for demotion.
-
-So the pipeline is memory → prompt → ledger → gradient, and the gradient only ever sees
-*proven* work. That is what makes "text as a rewrite" safe: the text proposes, the
-verifier disposes.
+**Ledger → weights.** The working training path is ledger-backed SFT after school
+advancement. `aria ledger sft` exports question/contract pairs from held rungs by default;
+it does not currently attach a retrieved memory block or claim that memory caused the
+model to learn a fact. The actual gradient step requires running `training/sft_qlora.py`
+on a compatible, explicitly selected base model. Until retrieval provenance is carried
+into that pipeline, the honest path is ledger → held rung → SFT, not memory → gradient.
 
 ## 4. What is not built yet, and should be
 
-* **Citation counting.** Nothing tracks how often an entry is retrieved, so "frequently
-  used and never contradicted" is a stated rule with no implementation. The data model
-  has `links` for it; the counter is the next piece of work.
-* **Demotion.** A memory contradicted by a failed attempt is flagged in the ledger but
-  is not yet moved to `correction` automatically.
-* **Semantic search.** If lexical retrieval turns out to miss paraphrases, the honest
-  upgrade is a small embedding model run locally (see `docs/HF_MANIFEST.md`), not a
-  cloud call — the memory file must stay usable offline.
+* **Automatic ask-time retrieval.** The memory command can build a prompt block, but
+  `MathChannel` does not yet read the memory store or track which entries were used.
+* **Citation counting and provenance to SFT.** Nothing tracks retrieval frequency or
+  carries memory IDs into a later ledger/SFT record, so memory-attributed learning is not
+  established.
+* **Automatic demotion.** A failed ledger attempt can be imported as a correction record,
+  but it does not automatically supersede a specific memory. Use `memory correct` to
+  supersede one explicitly and retain its history.
+* **Semantic search.** If lexical retrieval misses paraphrases in practice, evaluate a
+  local embedding model (see `docs/HF_MANIFEST.md`) rather than silently switching to a
+  cloud call.
 
 ## 5. What would falsify this
 
-1. **Retrieved memory does not change outcomes.** Run the same task set with and
-   without `memory context` prepended. If contract validity and proven-step rate do not
-   move, the memory is decoration.
+1. **Retrieved memory does not change outcomes.** After ask-time integration and
+   provenance logging exist, run the same task set with and without memory context. If
+   contract validity and verified-step outcomes do not change, the memory is decoration.
 2. **The audit stays green while the memory is wrong.** Spot-check ten `verified`
    entries against their sources; if any are false, the confidence ladder is being
    applied to the wrong things.

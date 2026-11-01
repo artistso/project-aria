@@ -48,7 +48,7 @@ Next concrete steps:
    boundary.
 2. Add expert-iteration: search → verify → keep the shortest verified path →
    retrain.
-3. Scale the mined corpus from ~10² to ~10⁶ preference pairs by generating
+3. Scale the verifier-mined rule-ordering corpus from ~10² to ~10⁶ pairwise labels by generating
    synthetic expressions with a canonical target form.
 
 ---
@@ -110,14 +110,21 @@ Next concrete steps:
 | Assumption-carrying rewriting (`x ≠ 1` when cancelling `x − 1`) | Current rational cancellation is generic; domain conditions are not tracked as side-conditions | Design needed |
 | Proof-state search (backward chaining) | Required for real theorem proving, as opposed to identity checking | Not started |
 | Published corpus + reproducibility script | Prerequisite for credible external claims | Partial (`aria bench --json-out`) |
+| Actual LLM at natural-language edges | Keep language input/output outside the verified symbolic core | `MathChannel` supports an OpenAI-compatible model; specified Kimi source, runtime, and user-intent fidelity are unverified |
+| Ledger + staged-school SFT weight updates | Change model parameters from demonstrated processes, not scalar maximisation | Held-rung export and QLoRA reference implemented; no compatible model run or weight update is claimed |
+| Micro/meso/macro reasoning frame | Preserve atomic evidence, branch summaries, compilation, and held state | Frame and compile primitives implemented; multi-candidate engine search is not wired |
+| Recoverable context budgeting | Never silently clip required evidence or mutate a held state on narration/truncation | Whole-block packing, JSON source manifests, and fail-closed mandatory overflow implemented |
+| Optional human feedback and preferences | Preserve spontaneous appreciation/preferences without treating silence as failure, praise as proof, or feedback as a scalar objective | Subjective preference memory and correction implemented; automatic capture and optional sampling are not |
 
 ---
 
 ## Non-goals
 
-* Natural-language understanding beyond the instruction grammar. ARIA is a
-  reasoning backend, not a chatbot; an LLM front-end is expected to translate
-  free text into `SymbolicState` and to explain ARIA's verified output.
+* General natural-language reasoning inside the symbolic core. The actual LLM
+  integration belongs at the input/output edges: it translates free text into a
+  contract and is prompted to explain ARIA's checked frame. Translation fidelity
+  and narration are evaluated separately; neither is made trustworthy by the
+  symbolic verifier alone.
 * Replacing computer algebra systems. ARIA orchestrates them behind a
   verification boundary.
 * Pretraining a foundation model. The neural component is trained on verified

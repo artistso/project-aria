@@ -118,7 +118,7 @@ this scale.
 
 Why this result is unsurprising:
 
-1. The training corpus is ~10² preference pairs (111 at present); the model has ~20 parameters.
+1. The training corpus is ~10² verifier-mined pairwise rule-ordering labels (111 at present), not human preference ratings; the model has ~20 parameters.
 2. The fixed order is not arbitrary — the rules were written in dependency
    order, which is a strong prior that a small ranker must rediscover.
 3. The tasks are 1–3 rewrites long, so there is little room for a heuristic to
@@ -172,7 +172,7 @@ building the harness.
 
 ```bash
 pip install -e ".[dev]"
-pytest                                    # 113 tests
+pytest                                    # 282 tests at this revision
 aria bench --markdown benchmarks/report.md --json-out benchmarks/report.json
 aria train --epochs 80 --eval             # policy metrics + ordering comparison
 ```

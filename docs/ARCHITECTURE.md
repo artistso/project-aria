@@ -98,9 +98,10 @@ Features are structural and goal-relative: size/depth delta, similarity to the
 current state (small steps preferred), similarity to the goal form, operator
 count deltas, shared variables, rule identity.
 
-Training data is **mined, not labelled by hand**: `mine_preferences` runs the
-engine, keeps only verified steps as positives, and samples other applicable
-rules in the same state as negatives; `mine_shortest_path_preferences` adds BFS
+Rule-ordering training data is **mined, not labelled by humans**:
+`mine_preferences` runs the engine, keeps only verified steps as positives, and
+samples other applicable rules in the same state as negatives;
+`mine_shortest_path_preferences` adds BFS
 labels ("prefer the step that shortens the derivation"). The model is a
 Bradley–Terry ranker trained by SGD with L2, persisted as a small JSON file
 (`aria/neural/weights.json`).

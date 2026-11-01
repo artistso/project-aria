@@ -1,7 +1,8 @@
-"""Measure a live model's contract quality with ARIA's verifier.
+"""Evaluate an LLM translator without reducing checked work to a scalar reward.
 
 Works against any OpenAI-compatible server (llama.cpp, LM Studio, Ollama) and
-needs no GPU on the machine running the evaluation.
+needs no GPU on the machine running the evaluation. Reports translation
+validity, repair load, engine outcomes, and the separate process-audit state.
 
     python training/eval_contract.py --endpoint http://127.0.0.1:8080/v1/chat/completions
 """
@@ -9,16 +10,15 @@ needs no GPU on the machine running the evaluation.
 from __future__ import annotations
 
 import argparse
-import statistics
 import sys
+from collections import Counter
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from aria.bench.tasks import TASKS, tasks_for  # noqa: E402
+from aria.bench.tasks import tasks_for  # noqa: E402
 from aria.llm.client import ClientError, OpenAICompatClient  # noqa: E402
-from aria.llm.dataset import reward, score_completion  # noqa: E402
-from aria.llm.grammar import build_grammar  # noqa: E402
+from aria.llm.context import AuditState  # noqa: E402
 from aria.llm.orchestrator import MathChannel  # noqa: E402
 
 
@@ -38,14 +38,15 @@ def main() -> int:
     grammar_mode = None if args.grammar == "off" else args.grammar
     channel = MathChannel(client, grammar_mode=grammar_mode, narrate=False)
 
-    tasks = [t for t in tasks_for(args.suite) if t.suite != "units"]
-    if args.limit:
+    tasks = [task for task in tasks_for(args.suite) if task.suite != "units"]
+    if args.limit is not None:
         tasks = tasks[: args.limit]
 
-    valid = 0
-    solved = 0
+    valid_contracts = 0
+    decisions = 0
     repairs = 0
-    rewards = []
+    audit_counts = Counter({state.value: 0 for state in AuditState})
+    outcomes: Counter[str] = Counter()
     rows = []
 
     for task in tasks:
@@ -54,24 +55,34 @@ def main() -> int:
         except ClientError as error:  # pragma: no cover - network dependent
             print(f"server error: {error}", file=sys.stderr)
             return 2
-        breakdown = score_completion(result.contract_text) if result.contract_text else None
-        score = reward(result.contract_text) if result.contract_text else 0.0
-        rewards.append(score)
-        valid += 1 if result.request is not None else 0
-        solved += 1 if (result.derivation and result.derivation.status == "solved") else 0
-        repairs += result.repairs
-        rows.append((task.task_id, result.request is not None, score, result.error))
 
-    total = max(1, len(tasks))
-    print(f"tasks                : {len(tasks)}")
-    print(f"contract validity    : {valid / total:.1%} ({valid}/{total})")
-    print(f"solved by the engine : {solved / total:.1%}")
-    print(f"mean reward          : {statistics.mean(rewards) if rewards else 0.0:.3f}")
-    print(f"mean repairs/query   : {repairs / total:.2f}")
+        valid = result.request is not None
+        valid_contracts += int(valid)
+        repairs += result.repairs
+        outcome = result.derivation.status if result.derivation else "not-run"
+        outcomes[outcome] += 1
+        decisions += int(outcome in {"solved", "refuted"})
+        audit = result.frame.audit_state.value if result.frame else AuditState.HELD.value
+        audit_counts[audit] += 1
+        rows.append((task.task_id, valid, outcome, audit, result.repairs, result.error))
+
+    total = len(tasks)
+    denominator = max(1, total)
+    print(f"tasks                  : {total}")
+    print(f"contract validity      : {valid_contracts / denominator:.1%} ({valid_contracts}/{total})")
+    print(f"engine decisions       : {decisions / denominator:.1%} ({decisions}/{total})")
+    print(f"process audit pass     : {audit_counts[AuditState.PASS.value]}")
+    print(f"process audit fail     : {audit_counts[AuditState.FAIL.value]}")
+    print(f"process audit held     : {audit_counts[AuditState.HELD.value]}")
+    print(f"mean repairs/query     : {repairs / denominator:.2f}")
+    print(f"task outcomes          : {dict(sorted(outcomes.items()))}")
     print()
-    for task_id, ok, score, error in rows:
-        flag = "ok " if ok else "FAIL"
-        print(f"  {flag} {task_id:10s} reward={score:.2f}" + (f"  {error[:70]}" if error else ""))
+    for task_id, valid, outcome, audit, repair_count, error in rows:
+        flag = "ok " if valid else "FAIL"
+        message = f"  {flag} {task_id:10s} outcome={outcome:<8s} audit={audit:<4s} repairs={repair_count}"
+        if error:
+            message += f"  {error[:70]}"
+        print(message)
     return 0
 
 

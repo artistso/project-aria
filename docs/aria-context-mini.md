@@ -6,21 +6,40 @@
 ## What it is
 
 ARIA is a neuro-symbolic reasoning system where **typed expression trees, not
-tokens, are the substrate**. Math is parsed into exact symbolic objects,
-transformed by explicit justified rewrite rules, and **every step is verified**
-before acceptance. A small learned policy ranks which rewrite to try next; it
-never emits answers or bypasses verification.
+tokens, are the substrate**. Math is parsed into exact symbolic objects and
+transformed by explicit rewrite rules. Each produced step is audited; only
+verified steps count as a demonstrated process. A small learned policy ranks
+which symbolic rewrite to try next; it cannot bypass the verifier.
 
-Python 3.10+, zero required dependencies (SymPy optional, upgrades
-transcendental identity checks from `unknown` to `proven`).
+Python 3.10+, zero required dependencies for the symbolic core (SymPy optional,
+upgrades transcendental identity checks from `unknown` to `proven`). In the
+working channel, an actual separately supplied LLM handles natural-language
+translation and narration; the symbolic core does not become a language model.
 
 ## Pipeline
 
+Direct symbolic CLI path:
 ```
-text → parse → SymbolicState(exprs, Goal) → engine dispatch
+text → parser → SymbolicState(exprs, Goal) → engine dispatch
      → rule-produced candidate rewrite → verifier checks the step invariant
      → accepted step appended → Derivation(status, steps, solutions)
 ```
+
+LLM channel:
+```
+natural language → actual LLM translator → structured contract → symbolic engine
+                 → micro/meso/macro evidence frame → actual LLM narrator → text
+```
+
+The requested source is Hugging Face `meshllm/Kimi-K3-UD-Q4_K_XL-layers`, to
+retrieve with `git clone https://huggingface.co/meshllm/Kimi-K3-UD-Q4_K_XL-layers`.
+Existence, weights, license, compatibility, and any weight update are unverified.
+Qwen references in examples are separate smoke tests, not substitutes.
+
+Human appreciation and preferences may be spontaneous, but they are optional
+subjective context—not mathematical proof or a scalar reward. Silence is not a
+negative signal; self-reward needs no system approval. `kind=preference` is
+inspectable/correctable memory, currently neither auto-captured nor auto-injected.
 
 ## Representation
 
@@ -32,10 +51,11 @@ canonical keys (used for hashing, dedup, structural goal tests). This is **not**
 algebraic equivalence — `2x + 3x` and `5x` differ until `collect_like_terms`
 runs, which is why that rewrite is a visible verified step.
 
-Parsing is a grammar, not a model: failures raise `ParseError` with a position.
-`2ab` means `2·a·b` unless `ab` is declared atomic via `parse(..., symbols=[...])`.
-Instruction patterns map to goals: solve / simplify / factor / expand / verify /
-differentiate / derive.
+The symbolic parser is a grammar, not a model: failures raise `ParseError` with a
+position. `2ab` means `2·a·b` unless `ab` is declared atomic via
+`parse(..., symbols=[...])`. Instruction patterns map to goals: solve / simplify /
+factor / expand / verify / differentiate / derive. The separate LLM translator
+handles natural-language input at the channel edge and must produce a valid contract.
 
 ## Verification (the core idea)
 
@@ -93,8 +113,9 @@ must be rejected.
 
 Ranks candidate rewrites by structural features (size/depth delta, similarity to
 current state and to the goal form, operator deltas, rule identity). Bradley–Terry
-logistic ranker trained on preference pairs mined from *verified* derivations,
-persisted as JSON. A bad policy costs search time, never correctness.
+logistic ranker trained on pairwise rule-ordering labels mined from *verified*
+derivations (not human ratings), persisted as JSON. A bad policy costs search
+time, never correctness.
 
 ## API
 
@@ -122,6 +143,8 @@ rule order (2.71 vs 1.86 mean expansions) at this scale; rationale in
 
 ## Limitations
 
-Notation + small instruction grammar, not general natural language. No Lean/Coq
-or Z3 bridge yet. No domain side-conditions on rational cancellation. Logistic
-ranker, not a tree transformer. No published LLM baseline comparison.
+The symbolic parser supports notation and a small instruction grammar, not
+open-ended natural language; an actual LLM translator is available at the edge,
+but intent fidelity is not established. No Lean/Coq or Z3 bridge yet. No domain
+side-conditions on rational cancellation. Logistic ranker, not a tree transformer.
+No published LLM baseline comparison or weight-update result.

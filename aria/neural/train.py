@@ -26,7 +26,7 @@ __all__ = ["mine_preferences", "train_policy", "evaluate_search", "DEFAULT_WEIGH
 
 DEFAULT_WEIGHTS_PATH = Path(__file__).with_name("weights.json")
 
-#: Extra expressions used only for mining preference pairs (broadens rule
+#: Extra expressions used only for mining rule-ordering pairs (broadens rule
 #: coverage beyond the benchmark suite, without touching evaluation data).
 SYNTHETIC_EXPRESSIONS: Tuple[str, ...] = (
     "2(x + 3) - 4x",
@@ -141,7 +141,11 @@ def mine_preferences(
     engine: Optional[SymbolicEngine] = None,
     tasks: Sequence[Task] = TASKS,
 ) -> List[PreferenceExample]:
-    """Mine ranked preference pairs from verified simplification traces."""
+    """Mine ranked rule-ordering pairs from verifier-checked simplification traces.
+
+    These are generated from symbolic search outcomes, not human preference
+    ratings or user feedback.
+    """
     engine = engine or SymbolicEngine()
     examples: List[PreferenceExample] = []
     relevant = {"simplify", "factor", "log-exp", "calculus", "solve"}
@@ -224,7 +228,7 @@ class TrainingReport:
     def to_text(self) -> str:
         lines = [
             "ARIA step-policy training",
-            f"  preference pairs : {self.examples} (train {self.train_examples} / test {self.test_examples})",
+            f"  rule-order pairs : {self.examples} (train {self.train_examples} / test {self.test_examples})",
             f"  train accuracy   : {self.train_accuracy:.1%}",
             f"  test accuracy    : {self.test_accuracy:.1%}",
             f"  final ranking loss: {self.final_loss:.4f}",

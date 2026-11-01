@@ -1,8 +1,9 @@
 """Minimal client for OpenAI-compatible local inference servers.
 
-Works with llama.cpp's ``llama-server``, LM Studio, Ollama's ``/v1`` shim, vLLM
-and anything else exposing ``/v1/chat/completions``.  Standard library only: the
-point of a local math channel is that nothing leaves the device.
+Works with llama.cpp's ``llama-server``, LM Studio, Ollama's ``/v1`` shim, vLLM,
+and other endpoints exposing ``/v1/chat/completions``. Standard library only.
+Traffic stays on-device only when the caller selects a local endpoint; this client
+also accepts remote URLs and does not enforce a privacy boundary.
 
 The one non-standard field is ``grammar`` (GBNF), which llama.cpp uses for
 constrained decoding.  Servers that do not understand it ignore it, so the same

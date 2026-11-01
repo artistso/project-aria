@@ -111,38 +111,36 @@ def test_ledger_json_report(tmp_path, capsys):
     assert payload["author"] == {"verdict": "verifier", "note": "none"}
 
 
-def test_ledger_sft_exports_only_proven_work(tmp_path, capsys):
+def test_ledger_sft_exports_only_proven_work_from_held_rungs(tmp_path, capsys):
     book = tmp_path / "ledger.jsonl"
-    main(
-        [
-            "ledger",
-            "record",
-            "--question",
-            "solve 9x - 3 = 24",
-            "--completion",
-            "goal: solve\nvar: x\nexpr: 9x - 3 = 24",
-            "--ledger",
-            str(book),
-        ]
+    good = (
+        ("solve 9x - 3 = 24", "goal: solve\nvar: x\nexpr: 9x - 3 = 24"),
+        ("solve 2x + 7 = 15", "goal: solve\nvar: x\nexpr: 2x + 7 = 15"),
+        ("solve 6x + 1 = 19", "goal: solve\nvar: x\nexpr: 6x + 1 = 19"),
     )
+    for question, completion in good[:2]:
+        main(["ledger", "record", "--question", question, "--completion", completion, "--ledger", str(book)])
+    capsys.readouterr()
+
+    out = tmp_path / "ledger.jsonl.sft"
+    assert main(["ledger", "sft", "--out", str(out), "--ledger", str(book)]) == 0
+    assert out.read_text() == "\n"
+    capsys.readouterr()
+
+    question, completion = good[2]
+    main(["ledger", "record", "--question", question, "--completion", completion, "--ledger", str(book)])
     main(
         [
-            "ledger",
-            "record",
-            "--question",
-            "solve 9/x - 3 = 24",
-            "--completion",
-            "goal: solve\nvar: x\nexpr: 9/x - 3 = 24",
-            "--ledger",
-            str(book),
+            "ledger", "record", "--question", "solve 9/x - 3 = 24",
+            "--completion", "goal: solve\nvar: x\nexpr: 9/x - 3 = 24",
+            "--ledger", str(book),
         ]
     )
     capsys.readouterr()
-    out = tmp_path / "ledger.jsonl.sft"
     assert main(["ledger", "sft", "--out", str(out), "--ledger", str(book)]) == 0
     lines = out.read_text().strip().splitlines()
-    assert len(lines) == 1
-    assert "9/x" not in lines[0]
+    assert len(lines) == 3
+    assert all("9/x" not in line for line in lines)
 
 
 def test_geometry_shape_json(capsys):
@@ -217,6 +215,64 @@ def test_memory_context_and_export(tmp_path, capsys):
     target = tmp_path / "memory.md"
     assert main(["memory", "export", "--out", str(target), "--memory", str(store)]) == 0
     assert target.read_text().startswith("# What ARIA remembers")
+
+
+def test_memory_correction_command_preserves_and_replaces_memory(tmp_path, capsys):
+    store = tmp_path / "memory.jsonl"
+    assert main(
+        ["memory", "add", "a cube has six faces", "--source", "user", "--memory", str(store)]
+    ) == 0
+    capsys.readouterr()
+    assert main(
+        [
+            "memory", "correct", "1", "a cube has six faces and eight vertices",
+            "--source", "geometry check", "--confidence", "verified", "--memory", str(store),
+        ]
+    ) == 0
+    assert "corrects memory #1" in capsys.readouterr().out
+    assert main(["memory", "find", "cube six faces", "--memory", str(store)]) == 0
+    out = capsys.readouterr().out
+    assert "eight vertices" in out
+    assert "(fact" not in out
+
+
+def test_memory_cli_records_and_corrects_subjective_preferences(tmp_path, capsys):
+    store = tmp_path / "memory.jsonl"
+    assert main(
+        [
+            "--json", "memory", "add", "I like this name, not the other one",
+            "--kind", "preference", "--source", "user-stated",
+            "--confidence", "stated", "--memory", str(store),
+        ]
+    ) == 0
+    first = json.loads(capsys.readouterr().out)
+    assert first["kind"] == "preference"
+    assert first["confidence"] == "stated"
+
+    assert main(
+        [
+            "--json", "memory", "correct", str(first["id"]),
+            "Use the preferred name Aria",
+            "--source", "user correction", "--memory", str(store),
+        ]
+    ) == 0
+    corrected = json.loads(capsys.readouterr().out)
+    assert corrected["kind"] == "preference"
+    assert corrected["supersedes"] == first["id"]
+    assert len(store.read_text().splitlines()) == 2
+
+
+def test_memory_context_budget_error_is_recoverable_json(tmp_path, capsys):
+    store = tmp_path / "memory.jsonl"
+    main(["memory", "add", "one triangle fact", "--tags", "triangle", "--memory", str(store)])
+    capsys.readouterr()
+    code = main(
+        ["--json", "memory", "context", "triangle", "--max-chars", "1", "--memory", str(store)]
+    )
+    assert code == 2
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["recoverable"] is True
+    assert payload["source_entries"][0]["text"] == "one triangle fact"
 
 
 def test_memory_import_from_geometry(tmp_path, capsys):

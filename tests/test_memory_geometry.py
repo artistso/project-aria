@@ -64,6 +64,33 @@ def test_forget_removes_one_entry(tmp_path) -> None:
     assert len(store.entries()) == 1
 
 
+def test_user_preferences_are_subjective_correctable_and_not_verifier_results(tmp_path) -> None:
+    store = M.MemoryStore(tmp_path / "memory.jsonl")
+    first = store.add(
+        "I liked the cheesecake; offer a variation again",
+        kind="preference",
+        tags=("dessert",),
+        source="user-stated",
+        confidence="stated",
+    )
+
+    context = store.context("cheesecake variation", max_chars=1200)
+    assert "(preference, stated)" in context
+    assert "not a fact, consent, or verifier result" in context
+    assert "no observation, not dislike or failure" in context
+
+    corrected = store.correct(
+        first.id,
+        "I prefer lemon cheesecake, not the chocolate one",
+        source="user correction",
+    )
+    assert corrected.kind == "preference"
+    assert corrected.supersedes == first.id
+    assert first in store.entries()  # correction history remains inspectable
+    assert corrected in store.active_entries()
+    assert first not in store.active_entries()
+
+
 # ---------------------------------------------------------------------------
 # Memory: looking things up
 # ---------------------------------------------------------------------------
@@ -116,8 +143,77 @@ def test_context_respects_the_character_budget(tmp_path) -> None:
     store = M.MemoryStore(tmp_path / "memory.jsonl")
     for index in range(40):
         store.add(f"fact number {index} about triangles and their angles", tags=("triangle",))
-    block = store.context("triangles angles", k=40, max_chars=300)
+    block = store.context("triangles angles", k=40, max_chars=600)
     assert len(block.splitlines()) < 12
+    assert len(block) <= 600
+
+
+def test_memory_correction_is_append_only_and_retrieves_the_replacement(tmp_path) -> None:
+    store = M.MemoryStore(tmp_path / "memory.jsonl")
+    original = store.add(
+        "a cube has six faces",
+        tags=("geometry", "cube"),
+        source="old notebook",
+        confidence="stated",
+    )
+    correction = store.correct(
+        original.id,
+        "a cube has six faces and eight vertices",
+        source="aria/geometry/shapes.py",
+        confidence="verified",
+    )
+
+    assert correction.kind == "correction"
+    assert correction.supersedes == original.id
+    assert [entry.id for entry in store.entries()] == [original.id, correction.id]
+    assert [entry.id for entry in store.active_entries()] == [correction.id]
+    hits = store.find("cube six faces")
+    assert hits and hits[0].id == correction.id
+    assert "supersedes #1" in store.render_markdown()
+
+
+def test_memory_correction_must_target_an_active_existing_entry(tmp_path) -> None:
+    store = M.MemoryStore(tmp_path / "memory.jsonl")
+    original = store.add("the answer is six", source="user", confidence="stated")
+    replacement = store.correct(original.id, "the answer is seven")
+    with pytest.raises(ValueError, match="already superseded"):
+        store.correct(original.id, "the answer is eight")
+    with pytest.raises(KeyError, match="unknown memory"):
+        store.correct(999, "a new answer")
+    assert replacement.id != original.id
+
+
+def test_memory_context_manifest_can_recover_omitted_whole_entries(tmp_path) -> None:
+    store = M.MemoryStore(tmp_path / "memory.jsonl")
+    for index in range(12):
+        store.add(
+            f"triangle theorem {index:02d} says all interior angles add to one hundred eighty degrees",
+            tags=("triangle",),
+            source=f"source-{index}",
+            confidence="tested",
+        )
+    pack = store.context_pack("triangle theorem", k=12, max_chars=600)
+    assert pack.reduced
+    assert pack.omitted
+    assert len(pack.text) <= 600
+    serialized = pack.as_dict()
+    assert serialized["recoverable"]
+    assert any(entry["id"] in serialized["omitted_ids"] for entry in serialized["source_entries"])
+    restored = pack.rebuild(10_000)
+    assert not restored.reduced
+    assert len(restored.included) == 12
+    assert {entry.id for entry in restored.included} == {entry.id for entry in pack.source_entries}
+
+
+def test_memory_context_budget_error_keeps_rebuild_sources(tmp_path) -> None:
+    store = M.MemoryStore(tmp_path / "memory.jsonl")
+    store.add("one triangle fact", tags=("triangle",), source="test")
+    with pytest.raises(M.MemoryContextBudgetError) as raised:
+        store.context_pack("triangle", max_chars=1)
+    error = raised.value
+    assert error.as_dict()["recoverable"] is True
+    assert error.as_dict()["source_entries"][0]["text"] == "one triangle fact"
+    assert error.rebuild(1000).text
 
 
 # ---------------------------------------------------------------------------
