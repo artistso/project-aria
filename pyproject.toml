@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aria-symbolic"
+version = "0.1.0"
+description = "ARIA - a neuro-symbolic architecture for verified mathematical and physical reasoning"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Project ARIA contributors" }]
+keywords = ["neuro-symbolic", "computer-algebra", "formal-verification", "reasoning", "physics"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Topic :: Scientific/Engineering :: Mathematics",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = []
+
+[project.optional-dependencies]
+symbolic = ["sympy>=1.10"]
+dev = ["pytest>=7.0", "sympy>=1.10"]
+neural = ["numpy>=1.24"]
+
+[project.scripts]
+aria = "aria.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["aria*"]
+
+[tool.setuptools.package-data]
+"aria.neural" = ["weights.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
